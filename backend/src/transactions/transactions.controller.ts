@@ -1,78 +1,117 @@
 import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
+Body,
+Controller,
+Get,
+Param,
+Post,
+Req,
+UseGuards,
 } from '@nestjs/common';
 
+import type { Request } from 'express';
+
+import { UserRole } from '../generated/prisma/enums';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import type {
-  CreateDepositBody,
-  CreateTransferBody,
-  CreateWithdrawalBody,
+CreateDepositBody,
+CreateTransferBody,
+CreateWithdrawalBody,
 } from './transactions.service';
 
 import { TransactionsService } from './transactions.service';
 
+interface AuthenticatedRequest extends Request {
+user: {
+id: string;
+phone: string;
+role: UserRole;
+};
+}
+
 @Controller('transactions')
 export class TransactionsController {
-  constructor(
-    private readonly transactionsService: TransactionsService,
-  ) {}
+constructor(
+private readonly transactionsService: TransactionsService,
+) {}
 
-  /**
-   * TRANSFERT ENTRE UTILISATEURS
-   */
+/**
+
+* TRANSFERT ENTRE UTILISATEURS
+  */
   @Post('transfer')
   createTransfer(@Body() body: CreateTransferBody) {
-    return this.transactionsService.createTransfer(body);
+  return this.transactionsService.createTransfer(body);
   }
 
-  /**
-   * DÉPÔT
-   */
+/**
+
+* DÉPÔT
+  */
   @Post('deposit')
   createDeposit(@Body() body: CreateDepositBody) {
-    return this.transactionsService.createDeposit(body);
+  return this.transactionsService.createDeposit(body);
   }
 
-  /**
-   * RETRAIT
-   */
+/**
+
+* RETRAIT
+  */
   @Post('withdrawal')
   createWithdrawal(@Body() body: CreateWithdrawalBody) {
-    return this.transactionsService.createWithdrawal(body);
+  return this.transactionsService.createWithdrawal(body);
   }
 
-  /**
-   * LISTE DES TRANSACTIONS
-   */
+/**
+
+* TRANSACTIONS DE L'UTILISATEUR CONNECTÉ
+*
+* L'identifiant de l'utilisateur vient directement
+* du JWT validé par JwtStrategy.
+  */
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  findMyTransactions(
+  @Req() request: AuthenticatedRequest,
+  ) {
+  return this.transactionsService.findByUserId(
+  request.user.id,
+  );
+  }
+
+/**
+
+* LISTE DES TRANSACTIONS
+  */
   @Get()
   findAll() {
-    return this.transactionsService.findAll();
+  return this.transactionsService.findAll();
   }
 
-  /**
-   * TRANSACTIONS D'UN UTILISATEUR
-   */
+/**
+
+* TRANSACTIONS D'UN UTILISATEUR
+  */
   @Get('user/:userId')
   findByUserId(@Param('userId') userId: string) {
-    return this.transactionsService.findByUserId(userId);
+  return this.transactionsService.findByUserId(userId);
   }
 
-  /**
-   * TRANSACTION PAR RÉFÉRENCE
-   */
+/**
+
+* TRANSACTION PAR RÉFÉRENCE
+  */
   @Get('reference/:reference')
   findByReference(@Param('reference') reference: string) {
-    return this.transactionsService.findByReference(reference);
+  return this.transactionsService.findByReference(reference);
   }
 
-  /**
-   * TRANSACTION PAR ID
-   */
+/**
+
+* TRANSACTION PAR ID
+  */
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.transactionsService.findOne(id);
+  return this.transactionsService.findOne(id);
   }
-}
+  }

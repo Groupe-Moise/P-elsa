@@ -4,31 +4,45 @@ import {
   Get,
   Param,
   Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 
-import { UserRole } from '../generated/prisma/enums';
-import { UsersService } from './users.service';
+import type { Request } from 'express';
 
-interface CreateUserBody {
-  phone: string;
-  email?: string;
-  firstName: string;
-  lastName: string;
-  role?: UserRole;
+import { UserRole } from '../generated/prisma/enums';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UsersService } from './users.service';
+import type { CreateUserDto } from './users.service';
+
+interface AuthenticatedRequest extends Request {
+  user: {
+    id: string;
+    phone: string;
+    role: UserRole;
+  };
 }
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+  ) {}
 
   @Post()
-  create(@Body() body: CreateUserBody) {
+  create(@Body() body: CreateUserDto) {
     return this.usersService.create(body);
   }
 
   @Get()
   findAll() {
     return this.usersService.findAll();
+  }
+
+  @Get('me/profile')
+  @UseGuards(JwtAuthGuard)
+  findMe(@Req() request: AuthenticatedRequest) {
+    return this.usersService.findMe(request.user.id);
   }
 
   @Get('phone/:phone')

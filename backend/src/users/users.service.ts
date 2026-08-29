@@ -1,3 +1,4 @@
+
 import {
   ConflictException,
   Injectable,
@@ -7,7 +8,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
 
-interface CreateUserDto {
+export interface CreateUserDto {
   phone: string;
   email?: string;
   firstName: string;
@@ -59,6 +60,14 @@ export class UsersService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      /*
+       * IMPORTANT :
+       * La création d'un utilisateur classique ne doit pas créer
+       * un compte sans PIN.
+       *
+       * Cette méthode est conservée pour les besoins internes.
+       * Les inscriptions normales passent désormais par /auth/register.
+       */
       const user = await tx.user.create({
         data: {
           phone: data.phone,
@@ -67,6 +76,22 @@ export class UsersService {
           lastName: data.lastName,
           role: data.role ?? UserRole.CLIENT,
           status: UserStatus.ACTIVE,
+
+          // Valeur temporaire uniquement pour satisfaire le schéma.
+          // L'inscription publique doit utiliser AuthService.
+          pinHash: '',
+        },
+
+        select: {
+          id: true,
+          phone: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
         },
       });
 
@@ -90,13 +115,24 @@ export class UsersService {
 
   async findAll() {
     return this.prisma.user.findMany({
-      include: {
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+
         wallet: {
           include: {
             currency: true,
           },
         },
       },
+
       orderBy: {
         createdAt: 'desc',
       },
@@ -108,7 +144,18 @@ export class UsersService {
       where: {
         id,
       },
-      include: {
+
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+
         wallet: {
           include: {
             currency: true,
@@ -129,7 +176,50 @@ export class UsersService {
       where: {
         phone,
       },
-      include: {
+
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+
+        wallet: {
+          include: {
+            currency: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur introuvable.');
+    }
+
+    return user;
+  }
+
+  async findMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+
         wallet: {
           include: {
             currency: true,

@@ -48,6 +48,7 @@ model User {
   email         String?    @unique
   firstName     String
   lastName      String
+  pinHash       String
   role          UserRole   @default(CLIENT)
   status        UserStatus @default(ACTIVE)
   createdAt     DateTime   @default(now())
@@ -117,7 +118,7 @@ model Transaction {
   updatedAt        DateTime          @updatedAt
 
   senderUser     User?   @relation("SenderTransactions", fields: [senderUserId], references: [id])
-  receiverUser   User?   @relation("ReceiverTransactions", fields: [receiverUserId], references: [id])
+  receiverUser   User? @relation("ReceiverTransactions", fields: [receiverUserId], references: [id])
 
   senderWallet   Wallet? @relation("SenderWalletTransactions", fields: [senderWalletId], references: [id])
   receiverWallet Wallet? @relation("ReceiverWalletTransactions", fields: [receiverWalletId], references: [id])

@@ -351,127 +351,182 @@ export class TransactionsService {
     });
   }
 
-  /**
-   * LISTE DES TRANSACTIONS
-   */
-  async findAll() {
-    return this.prisma.transaction.findMany({
-      include: {
-        senderUser: true,
-        receiverUser: true,
-        senderWallet: {
-          include: {
-            currency: true,
+    /**
+     * LISTE DES TRANSACTIONS
+     */
+    async findAll() {
+      const transactions = await this.prisma.transaction.findMany({
+        include: {
+          senderUser: true,
+          receiverUser: true,
+          senderWallet: {
+            include: {
+              currency: true,
+            },
+          },
+          receiverWallet: {
+            include: {
+              currency: true,
+            },
           },
         },
-        receiverWallet: {
-          include: {
-            currency: true,
-          },
+        orderBy: {
+          createdAt: 'desc',
         },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-  }
+      });
 
-  /**
-   * TRANSACTION PAR ID
-   */
-  async findOne(id: string) {
-    const transaction = await this.prisma.transaction.findUnique({
-      where: {
-        id,
-      },
-      include: {
-        senderUser: true,
-        receiverUser: true,
-        senderWallet: {
-          include: {
-            currency: true,
-          },
-        },
-        receiverWallet: {
-          include: {
-            currency: true,
-          },
-        },
-      },
-    });
-
-    if (!transaction) {
-      throw new NotFoundException('Transaction introuvable.');
+      return transactions.map((transaction) =>
+        this.sanitizeTransaction(transaction),
+      );
     }
 
-    return transaction;
-  }
-
-  /**
-   * TRANSACTION PAR RÉFÉRENCE
-   */
-  async findByReference(reference: string) {
-    const transaction = await this.prisma.transaction.findUnique({
-      where: {
-        reference,
-      },
-      include: {
-        senderUser: true,
-        receiverUser: true,
-        senderWallet: {
-          include: {
-            currency: true,
+    /**
+     * TRANSACTION PAR ID
+     */
+    async findOne(id: string) {
+      const transaction = await this.prisma.transaction.findUnique({
+        where: {
+          id,
+        },
+        include: {
+          senderUser: true,
+          receiverUser: true,
+          senderWallet: {
+            include: {
+              currency: true,
+            },
+          },
+          receiverWallet: {
+            include: {
+              currency: true,
+            },
           },
         },
-        receiverWallet: {
-          include: {
-            currency: true,
-          },
-        },
-      },
-    });
+      });
 
-    if (!transaction) {
-      throw new NotFoundException('Transaction introuvable.');
+      if (!transaction) {
+        throw new NotFoundException(
+          'Transaction introuvable.',
+        );
+      }
+
+      return this.sanitizeTransaction(transaction);
     }
 
-    return transaction;
+    /**
+     * TRANSACTION PAR RÉFÉRENCE
+     */
+    async findByReference(reference: string) {
+      const transaction =
+        await this.prisma.transaction.findUnique({
+          where: {
+            reference,
+          },
+          include: {
+            senderUser: true,
+            receiverUser: true,
+            senderWallet: {
+              include: {
+                currency: true,
+              },
+            },
+            receiverWallet: {
+              include: {
+                currency: true,
+              },
+            },
+          },
+        });
+
+      if (!transaction) {
+        throw new NotFoundException(
+          'Transaction introuvable.',
+        );
+      }
+
+      return this.sanitizeTransaction(transaction);
+    }
+
+    /**
+     * TRANSACTIONS D'UN UTILISATEUR
+     */
+    async findByUserId(userId: string) {
+      const transactions =
+        await this.prisma.transaction.findMany({
+          where: {
+            OR: [
+              {
+                senderUserId: userId,
+              },
+              {
+                receiverUserId: userId,
+              },
+            ],
+          },
+          include: {
+            senderUser: true,
+            receiverUser: true,
+            senderWallet: {
+              include: {
+                currency: true,
+              },
+            },
+            receiverWallet: {
+              include: {
+                currency: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        });
+
+      return transactions.map((transaction) =>
+        this.sanitizeTransaction(transaction),
+      );
+    }
+
+  /**
+   * SUPPRESSION DES DONNÉES SENSIBLES
+   *
+   * Le pinHash ne doit jamais être envoyé au client.
+   */
+  private sanitizeUser<T extends { pinHash?: string }>(
+    user: T | null,
+  ) {
+    if (!user) {
+      return null;
+    }
+
+    const { pinHash: _pinHash, ...safeUser } = user;
+
+    return safeUser;
   }
 
   /**
-   * TRANSACTIONS D'UN UTILISATEUR
+   * NETTOYAGE D'UNE TRANSACTION
+   *
+   * Supprime les informations sensibles des utilisateurs
+   * avant d'envoyer la transaction au client.
    */
-  async findByUserId(userId: string) {
-    return this.prisma.transaction.findMany({
-      where: {
-        OR: [
-          {
-            senderUserId: userId,
-          },
-          {
-            receiverUserId: userId,
-          },
-        ],
-      },
-      include: {
-        senderUser: true,
-        receiverUser: true,
-        senderWallet: {
-          include: {
-            currency: true,
-          },
-        },
-        receiverWallet: {
-          include: {
-            currency: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  private sanitizeTransaction<
+    T extends {
+      senderUser?: { pinHash?: string } | null;
+      receiverUser?: { pinHash?: string } | null;
+    },
+  >(transaction: T) {
+    return {
+      ...transaction,
+      senderUser: this.sanitizeUser(
+        transaction.senderUser ?? null,
+      ),
+      receiverUser: this.sanitizeUser(
+        transaction.receiverUser ?? null,
+      ),
+    };
   }
+
 
   /**
    * GÉNÉRATION DE RÉFÉRENCE
