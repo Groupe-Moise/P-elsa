@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: p-elsa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: p_elsa
+      POSTGRES_USER: p_elsa
+      POSTGRES_PASSWORD: p_elsa_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - p_elsa_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  p_elsa_postgres_data:
