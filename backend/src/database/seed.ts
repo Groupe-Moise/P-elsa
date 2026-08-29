@@ -1,44 +1,47 @@
 import { PrismaService } from './prisma.service';
 
-async function main() {
+async function main(): Promise<void> {
   const prisma = new PrismaService();
 
-  await prisma.$connect();
-
-  const currencies = [
-    {
-      code: 'USD',
-      name: 'Dollar américain',
-      symbol: '$',
-    },
-    {
-      code: 'CDF',
-      name: 'Franc congolais',
-      symbol: 'FC',
-    },
-    {
-      code: 'ZMW',
-      name: 'Kwacha zambien',
-      symbol: 'ZK',
-    },
-  ];
-
-  for (const currency of currencies) {
-    await prisma.currency.upsert({
-      where: {
-        code: currency.code,
+  try {
+    const currencies = [
+      {
+        code: 'USD',
+        name: 'Dollar américain',
+        symbol: '$',
       },
-      update: currency,
-      create: currency,
-    });
+      {
+        code: 'CDF',
+        name: 'Franc congolais',
+        symbol: 'FC',
+      },
+      {
+        code: 'ZMW',
+        name: 'Kwacha zambien',
+        symbol: 'ZK',
+      },
+    ];
+
+    for (const currency of currencies) {
+      await prisma.currency.upsert({
+        where: {
+          code: currency.code,
+        },
+        update: {
+          name: currency.name,
+          symbol: currency.symbol,
+        },
+        create: currency,
+      });
+    }
+
+    console.log('Devises P-Elsa initialisées avec succès.');
+  } finally {
+    await prisma.$disconnect();
   }
-
-  console.log('Devises P-Elsa initialisées avec succès.');
-
-  await prisma.$disconnect();
 }
 
-main().catch(async (error) => {
-  console.error(error);
+void main().catch((error) => {
+  console.error('Erreur lors de l’initialisation des devises :', error);
   process.exit(1);
 });
