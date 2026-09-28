@@ -4,21 +4,28 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../database/prisma.service';
+import { withPrimaryBalance } from './wallet.mapper';
 
 @Injectable()
 export class WalletService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll() {
-    return this.prisma.wallet.findMany({
+    const wallets = await this.prisma.wallet.findMany({
       include: {
         user: true,
-        currency: true,
+        balances: {
+          include: {
+            currency: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
+
+    return wallets.map(withPrimaryBalance);
   }
 
   async findOne(id: string) {
@@ -28,7 +35,11 @@ export class WalletService {
       },
       include: {
         user: true,
-        currency: true,
+        balances: {
+          include: {
+            currency: true,
+          },
+        },
       },
     });
 
@@ -36,7 +47,7 @@ export class WalletService {
       throw new NotFoundException('Wallet introuvable.');
     }
 
-    return wallet;
+    return withPrimaryBalance(wallet);
   }
 
   async findByUserId(userId: string) {
@@ -46,7 +57,11 @@ export class WalletService {
       },
       include: {
         user: true,
-        currency: true,
+        balances: {
+          include: {
+            currency: true,
+          },
+        },
       },
     });
 
@@ -56,6 +71,6 @@ export class WalletService {
       );
     }
 
-    return wallet;
+    return withPrimaryBalance(wallet);
   }
 }

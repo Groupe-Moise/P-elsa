@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { PinAttemptsService } from './pin-attempts.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -27,11 +28,13 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 
   providers: [
     AuthService,
+    PinAttemptsService,
     JwtStrategy,
   ],
 
   exports: [
     AuthService,
+    PinAttemptsService,
     PassportModule,
     JwtModule,
   ],

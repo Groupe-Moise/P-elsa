@@ -1,6 +1,11 @@
 import 'dotenv/config';
 
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/client';
 
@@ -24,6 +29,27 @@ export class PrismaService
 
     super({
       adapter,
+
+      /**
+       * SÉCURITÉ
+       *
+       * pinHash ne sera jamais retourné par défaut
+       * lorsqu'un utilisateur est récupéré avec Prisma.
+       *
+       * Cela protège automatiquement :
+       * - /users
+       * - /users/me/profile
+       * - /wallets/me
+       * - /transactions/me
+       * - /transactions/transfer
+       * - /transactions/deposit
+       * - /transactions/withdrawal
+       */
+      omit: {
+        user: {
+          pinHash: true,
+        },
+      },
     });
   }
 

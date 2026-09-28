@@ -35,6 +35,27 @@ enum TransactionType {
   WITHDRAWAL
 }
 
+enum LedgerAccountKind {
+  /// Le compte "argent" d'un wallet utilisateur. Son solde,
+  /// calculé à partir de ses écritures, doit toujours égaler
+  /// Wallet.balance.
+  WALLET
+
+  /// Les commissions perçues par P-ELSA sur les retraits.
+  /// Compte séparé des wallets utilisateurs (fonds propres).
+  PLATFORM_COMMISSION
+
+  /// Représente les fonds côté opérateur Mobile Money : reçus
+  /// lors d'un dépôt, à verser lors d'un retrait. Sert de
+  /// contrepartie pour équilibrer chaque écriture.
+  PLATFORM_FLOAT
+}
+
+enum IdempotencyStatus {
+  PENDING
+  COMPLETED
+}
+
 enum TransactionStatus {
   PENDING
   COMPLETED
@@ -43,25 +64,70 @@ enum TransactionStatus {
 }
 
 model User {
-  id            String     @id @default(uuid())
-  phone         String     @unique
-  email         String?    @unique
-  firstName     String
-  lastName      String
-  pinHash       String
-  role          UserRole   @default(CLIENT)
-  status        UserStatus @default(ACTIVE)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id                String     @id @default(uuid())
+  phone             String     @unique
+  email             String?    @unique
+  firstName         String
+  lastName          String
+  pinHash           String
 
-  wallet        Wallet?
+  /// Échecs de PIN consécutifs (remis à 0 après un succès).
+  pinFailedAttempts Int        @default(0)
+
+  /// Le PIN est bloqué jusqu'à cette date après trop d'échecs.
+  pinLockedUntil    DateTime?
+
+  role              UserRole   @default(CLIENT)
+  status            UserStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  wallet            Wallet?
 
   sentTransactions     Transaction[] @relation("SenderTransactions")
   receivedTransactions Transaction[] @relation("ReceiverTransactions")
 
+  /// Actions d'administration effectuées PAR cet utilisateur
+  /// (uniquement rempli pour un compte ADMIN).
+  adminAuditLogs       AdminAuditLog[]
+
   @@index([role])
   @@index([status])
   @@map("users")
+}
+
+/// =========================================================
+/// JOURNAL D'AUDIT DES ACTIONS D'ADMINISTRATION
+/// =========================================================
+///
+/// Chaque action effectuée depuis les routes /admin (relance,
+/// annulation, suspension de compte, déblocage de PIN...) laisse
+/// une trace ici : qui, quoi, sur quelle cible, quand. Aucune
+/// ligne n'est jamais modifiée ni supprimée.
+model AdminAuditLog {
+  id          String   @id @default(uuid())
+
+  /// Administrateur qui a effectué l'action.
+  adminUserId String
+
+  /// Ex. TRANSACTION_RETRY, TRANSACTION_CANCEL, USER_SUSPEND,
+  /// USER_REACTIVATE, USER_UNLOCK_PIN.
+  action      String
+
+  /// Ex. "transaction", "user".
+  targetType  String
+  targetId    String?
+
+  /// Détails libres (raison fournie, ancien/nouveau statut...).
+  details     Json?
+
+  createdAt   DateTime @default(now())
+
+  adminUser   User     @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId])
+  @@index([targetType, targetId])
+  @@map("admin_audit_logs")
 }
 
 model Currency {
@@ -73,7 +139,10 @@ model Currency {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  wallets Wallet[]
+  walletBalances WalletBalance[]
+  ledgerAccounts LedgerAccount[]
+  ledgerEntries  LedgerEntry[]
+  transactions   Transaction[]
 
   @@map("currencies")
 }
@@ -81,21 +150,44 @@ model Currency {
 model Wallet {
   id         String       @id @default(uuid())
   userId     String       @unique
-  currencyId String
-  balance    Decimal      @default(0) @db.Decimal(20, 4)
   status     WalletStatus @default(ACTIVE)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 
-  user     User     @relation(fields: [userId], references: [id])
-  currency Currency @relation(fields: [currencyId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-  sentTransactions     Transaction[] @relation("SenderWalletTransactions")
-  receivedTransactions Transaction[] @relation("ReceiverWalletTransactions")
+  sentTransactions     Transaction[]   @relation("SenderWalletTransactions")
+  receivedTransactions Transaction[]   @relation("ReceiverWalletTransactions")
+  ledgerAccounts       LedgerAccount[]
+  balances             WalletBalance[]
 
-  @@index([currencyId])
   @@index([status])
   @@map("wallets")
+}
+
+/// =========================================================
+/// SOLDE D'UN WALLET, PAR DEVISE
+/// =========================================================
+///
+/// Un wallet peut détenir un solde dans plusieurs devises
+/// (ex. USD et CDF pour un utilisateur en RDC). Chaque paire
+/// (wallet, devise) a sa propre ligne, créée à la demande
+/// (à l'inscription pour les devises du pays de l'utilisateur,
+/// puis pour toute nouvelle devise ajoutée plus tard).
+model WalletBalance {
+  id         String   @id @default(uuid())
+  walletId   String
+  currencyId String
+  balance    Decimal  @default(0) @db.Decimal(20, 4)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  wallet   Wallet   @relation(fields: [walletId], references: [id])
+  currency Currency @relation(fields: [currencyId], references: [id])
+
+  @@unique([walletId, currencyId])
+  @@index([currencyId])
+  @@map("wallet_balances")
 }
 
 model Transaction {
@@ -114,6 +206,24 @@ model Transaction {
 
   description      String?
 
+  /// Devise de l'opération. Vide uniquement pour les transactions
+  /// créées avant l'ajout du multi-devises (USD à l'époque).
+  currencyId        String?
+
+  /// Fournisseur de paiement qui exécute l'opération (ex. sandbox,
+  /// maishapay) et référence de l'opération chez ce fournisseur.
+  /// Ensemble, ils permettent de retrouver la transaction quand le
+  /// fournisseur confirme le résultat par webhook.
+  provider          String?
+  providerReference String?
+
+  /// Réseau Mobile Money (ex. Airtel Money) et numéro concerné.
+  network           String?
+  counterpartyPhone String?
+
+  /// Motif renvoyé par le fournisseur quand l'opération échoue.
+  failureReason     String?
+
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -123,10 +233,111 @@ model Transaction {
   senderWallet   Wallet? @relation("SenderWalletTransactions", fields: [senderWalletId], references: [id])
   receiverWallet Wallet? @relation("ReceiverWalletTransactions", fields: [receiverWalletId], references: [id])
 
+  currency       Currency? @relation(fields: [currencyId], references: [id])
+
+  ledgerEntries  LedgerEntry[]
+
+  /// Un même fournisseur ne peut pas avoir deux transactions avec la
+  /// même référence (les valeurs vides ne sont pas comparées).
+  @@unique([provider, providerReference])
   @@index([type])
   @@index([status])
   @@index([senderUserId])
   @@index([receiverUserId])
   @@index([createdAt])
   @@map("transactions")
+}
+
+/// =========================================================
+/// CLÉS D'IDEMPOTENCE
+/// =========================================================
+///
+/// Empêche qu'un dépôt, un retrait ou un transfert soit
+/// exécuté deux fois si le client (l'application) relance
+/// la même opération après une coupure réseau.
+///
+/// Le client génère une clé unique avant chaque tentative et
+/// la renvoie à l'identique s'il doit réessayer. Le serveur
+/// exécute l'opération une seule fois et renvoie le même
+/// résultat pour chaque nouvelle tentative avec cette clé.
+model IdempotencyKey {
+  id        String            @id @default(uuid())
+  userId    String
+  key       String
+  status    IdempotencyStatus @default(PENDING)
+
+  /// Résultat de l'opération, renvoyé tel quel en cas de
+  /// nouvelle tentative avec la même clé.
+  response  Json?
+
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([userId, key])
+  @@index([createdAt])
+  @@map("idempotency_keys")
+}
+
+/// =========================================================
+/// LEDGER : COMPTABILITÉ À DOUBLE ENTRÉE
+/// =========================================================
+///
+/// Chaque mouvement d'argent (dépôt, retrait, transfert) est
+/// enregistré en plus du solde du wallet, sous la forme
+/// d'écritures dont la somme est toujours nulle : un compte
+/// est crédité, un autre est débité du même montant.
+///
+/// Le solde d'un wallet (Wallet.balance) reste la valeur
+/// utilisée pour les vérifications rapides (ex. le débit
+/// conditionnel qui empêche la double dépense). Le ledger est
+/// la source de vérité comptable : il doit être possible de
+/// prouver à tout moment que la somme des écritures d'un
+/// compte WALLET égale son Wallet.balance (voir
+/// LedgerService.reconcileWallet).
+model LedgerAccount {
+  id         String            @id @default(uuid())
+  kind       LedgerAccountKind
+
+  /// Renseigné uniquement pour les comptes WALLET.
+  walletId   String?
+
+  currencyId String
+  createdAt  DateTime          @default(now())
+
+  wallet     Wallet?           @relation(fields: [walletId], references: [id])
+  currency   Currency          @relation(fields: [currencyId], references: [id])
+  entries    LedgerEntry[]
+
+  /// Un wallet a un compte de ledger par devise qu'il détient
+  /// (voir WalletBalance) ; les comptes de plateforme ont
+  /// walletId = null et ne sont pas contraints par cet index
+  /// (Postgres traite chaque NULL comme distinct).
+  @@unique([walletId, currencyId])
+  @@map("ledger_accounts")
+}
+
+model LedgerEntry {
+  id            String        @id @default(uuid())
+  accountId     String
+
+  /// La transaction (dépôt, retrait, transfert) à l'origine de
+  /// cette écriture, pour remonter du ledger vers l'opération.
+  transactionId String?
+
+  /// Montant signé : positif crédite le compte, négatif le
+  /// débite. La somme des écritures d'une même opération doit
+  /// toujours être nulle.
+  amount        Decimal       @db.Decimal(20, 4)
+
+  currencyId    String
+  description   String?
+  createdAt     DateTime      @default(now())
+
+  account       LedgerAccount @relation(fields: [accountId], references: [id])
+  transaction   Transaction?  @relation(fields: [transactionId], references: [id])
+  currency      Currency      @relation(fields: [currencyId], references: [id])
+
+  @@index([accountId])
+  @@index([transactionId])
+  @@map("ledger_entries")
 }

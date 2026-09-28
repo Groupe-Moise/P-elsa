@@ -7,6 +7,8 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../database/prisma.service';
+import { PinAttemptsService } from './pin-attempts.service';
+import { withPrimaryBalance } from '../wallet/wallet.mapper';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 
@@ -15,6 +17,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly pinAttemptsService: PinAttemptsService,
   ) {}
 
   async register(data: RegisterDto) {
@@ -46,15 +49,23 @@ export class AuthService {
 
     const pinHash = await bcrypt.hash(data.pin, 12);
 
-    const usdCurrency = await this.prisma.currency.findUnique({
+    /**
+     * Devises de la RDC (marché de lancement) : le wallet est
+     * créé avec un solde à zéro dans chacune d'elles. D'autres
+     * pays et devises s'ajouteront progressivement (voir le
+     * plan de projet).
+     */
+    const rdcCurrencies = await this.prisma.currency.findMany({
       where: {
-        code: 'USD',
+        code: {
+          in: ['USD', 'CDF'],
+        },
       },
     });
 
-    if (!usdCurrency) {
+    if (rdcCurrencies.length === 0) {
       throw new UnauthorizedException(
-        'La devise USD n’est pas configurée.',
+        'Les devises de la RDC ne sont pas configurées.',
       );
     }
 
@@ -72,17 +83,33 @@ export class AuthService {
       const wallet = await tx.wallet.create({
         data: {
           userId: user.id,
-          currencyId: usdCurrency.id,
+        },
+      });
+
+      await tx.walletBalance.createMany({
+        data: rdcCurrencies.map((currency) => ({
+          walletId: wallet.id,
+          currencyId: currency.id,
           balance: 0,
+        })),
+      });
+
+      const walletWithBalances = await tx.wallet.findUniqueOrThrow({
+        where: {
+          id: wallet.id,
         },
         include: {
-          currency: true,
+          balances: {
+            include: {
+              currency: true,
+            },
+          },
         },
       });
 
       return {
         user,
-        wallet,
+        wallet: walletWithBalances,
       };
     });
 
@@ -91,38 +118,78 @@ export class AuthService {
     return {
       accessToken,
       user: this.sanitizeUser(result.user),
-      wallet: result.wallet,
+      wallet: withPrimaryBalance(result.wallet),
     };
   }
 
   async login(data: LoginDto) {
+    /**
+     * IMPORTANT :
+     *
+     * PrismaService masque pinHash globalement pour éviter
+     * qu'il soit accidentellement exposé dans les réponses API.
+     *
+     * Pour l'authentification uniquement, nous devons explicitement
+     * demander le pinHash afin que bcrypt puisse vérifier le PIN.
+     */
     const user = await this.prisma.user.findUnique({
       where: {
         phone: data.phone,
       },
+
+      omit: {
+        pinHash: false,
+      },
+
       include: {
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },
     });
 
     if (!user) {
+      /**
+       * Faux calcul de vérification : la réponse prend le même
+       * temps qu'avec un vrai compte, ce qui empêche de deviner
+       * quels numéros sont inscrits.
+       */
+      await this.pinAttemptsService.simulateVerification(
+        data.pin,
+      );
+
       throw new UnauthorizedException(
         'Numéro de téléphone ou PIN incorrect.',
       );
     }
 
-    const isPinValid = await bcrypt.compare(
+    if (!user.pinHash) {
+      throw new UnauthorizedException(
+        'Le compte ne possède pas de PIN valide.',
+      );
+    }
+
+    /**
+     * Vérification du PIN avec limitation des tentatives :
+     * après plusieurs échecs, le PIN est bloqué temporairement
+     * (erreur 429).
+     */
+    const pinResult = await this.pinAttemptsService.verify(
+      user.id,
       data.pin,
-      user.pinHash,
     );
 
-    if (!isPinValid) {
+    if (!pinResult.valid) {
       throw new UnauthorizedException(
-        'Numéro de téléphone ou PIN incorrect.',
+        pinResult.locked
+          ? pinResult.message
+          : 'Numéro de téléphone ou PIN incorrect.',
       );
     }
 
@@ -137,7 +204,7 @@ export class AuthService {
     return {
       accessToken,
       user: this.sanitizeUser(user),
-      wallet: user.wallet,
+      wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
     };
   }
 
@@ -146,10 +213,15 @@ export class AuthService {
       where: {
         id: userId,
       },
+
       include: {
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },

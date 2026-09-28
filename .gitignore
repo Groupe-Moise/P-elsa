@@ -85,3 +85,7 @@ Thumbs.db
 *.log
 tmp/
 temp/
+*.tar
+apps/mobile/lib.zip
+backend/maishapay-error-*.html
+backend/.env

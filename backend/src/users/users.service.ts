@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../database/prisma.service';
+import { withPrimaryBalance } from '../wallet/wallet.mapper';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
 
 export interface CreateUserDto {
@@ -47,15 +48,17 @@ export class UsersService {
       }
     }
 
-    const usdCurrency = await this.prisma.currency.findUnique({
+    const rdcCurrencies = await this.prisma.currency.findMany({
       where: {
-        code: 'USD',
+        code: {
+          in: ['USD', 'CDF'],
+        },
       },
     });
 
-    if (!usdCurrency) {
+    if (rdcCurrencies.length === 0) {
       throw new NotFoundException(
-        'La devise USD n’existe pas encore dans la base de données.',
+        'Les devises de la RDC ne sont pas configurées.',
       );
     }
 
@@ -98,23 +101,39 @@ export class UsersService {
       const wallet = await tx.wallet.create({
         data: {
           userId: user.id,
-          currencyId: usdCurrency.id,
+        },
+      });
+
+      await tx.walletBalance.createMany({
+        data: rdcCurrencies.map((currency) => ({
+          walletId: wallet.id,
+          currencyId: currency.id,
           balance: 0,
+        })),
+      });
+
+      const walletWithBalances = await tx.wallet.findUniqueOrThrow({
+        where: {
+          id: wallet.id,
         },
         include: {
-          currency: true,
+          balances: {
+            include: {
+              currency: true,
+            },
+          },
         },
       });
 
       return {
         user,
-        wallet,
+        wallet: withPrimaryBalance(walletWithBalances),
       };
     });
   }
 
   async findAll() {
-    return this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       select: {
         id: true,
         phone: true,
@@ -128,7 +147,11 @@ export class UsersService {
 
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },
@@ -137,6 +160,11 @@ export class UsersService {
         createdAt: 'desc',
       },
     });
+
+    return users.map((user) => ({
+      ...user,
+      wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
+    }));
   }
 
   async findOne(id: string) {
@@ -158,7 +186,11 @@ export class UsersService {
 
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },
@@ -168,7 +200,10 @@ export class UsersService {
       throw new NotFoundException('Utilisateur introuvable.');
     }
 
-    return user;
+    return {
+      ...user,
+      wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
+    };
   }
 
   async findByPhone(phone: string) {
@@ -190,7 +225,11 @@ export class UsersService {
 
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },
@@ -200,7 +239,10 @@ export class UsersService {
       throw new NotFoundException('Utilisateur introuvable.');
     }
 
-    return user;
+    return {
+      ...user,
+      wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
+    };
   }
 
   async findMe(userId: string) {
@@ -222,7 +264,11 @@ export class UsersService {
 
         wallet: {
           include: {
-            currency: true,
+            balances: {
+              include: {
+                currency: true,
+              },
+            },
           },
         },
       },
@@ -232,6 +278,9 @@ export class UsersService {
       throw new NotFoundException('Utilisateur introuvable.');
     }
 
-    return user;
+    return {
+      ...user,
+      wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
+    };
   }
 }

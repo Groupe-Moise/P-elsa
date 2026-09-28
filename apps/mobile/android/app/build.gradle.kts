@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.groupe.moise.p_elsa"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

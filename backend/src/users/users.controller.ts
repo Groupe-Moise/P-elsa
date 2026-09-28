@@ -5,13 +5,12 @@ import {
   Param,
   Post,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 
 import type { Request } from 'express';
 
 import { UserRole } from '../generated/prisma/enums';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { UsersService } from './users.service';
 import type { CreateUserDto } from './users.service';
 
@@ -29,28 +28,32 @@ export class UsersController {
     private readonly usersService: UsersService,
   ) {}
 
+  // Les inscriptions publiques passent par POST /auth/register.
   @Post()
+  @Roles(UserRole.ADMIN)
   create(@Body() body: CreateUserDto) {
     return this.usersService.create(body);
   }
 
   @Get()
+  @Roles(UserRole.ADMIN)
   findAll() {
     return this.usersService.findAll();
   }
 
   @Get('me/profile')
-  @UseGuards(JwtAuthGuard)
   findMe(@Req() request: AuthenticatedRequest) {
     return this.usersService.findMe(request.user.id);
   }
 
   @Get('phone/:phone')
+  @Roles(UserRole.ADMIN)
   findByPhone(@Param('phone') phone: string) {
     return this.usersService.findByPhone(phone);
   }
 
   @Get(':id')
+  @Roles(UserRole.ADMIN)
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
   }

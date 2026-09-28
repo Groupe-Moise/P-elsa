@@ -3,19 +3,20 @@ import {
   Get,
   Param,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 
 import type { Request } from 'express';
 
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UserRole } from '../generated/prisma/enums';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { assertOwnerOrAdmin } from '../auth/utils/assert-owner-or-admin';
 import { WalletService } from './wallet.service';
 
 interface AuthenticatedRequest extends Request {
   user: {
     id: string;
     phone: string;
-    role: string;
+    role: UserRole;
   };
 }
 
@@ -26,30 +27,37 @@ export class WalletController {
   ) {}
 
   @Get()
+  @Roles(UserRole.ADMIN)
   findAll() {
     return this.walletService.findAll();
   }
 
   @Get('me')
-  @UseGuards(JwtAuthGuard)
   findMe(@Req() request: AuthenticatedRequest) {
     return this.walletService.findByUserId(request.user.id);
   }
 
   @Get('user/:userId')
-  @UseGuards(JwtAuthGuard)
   findByUserId(
     @Param('userId') userId: string,
     @Req() request: AuthenticatedRequest,
   ) {
+    assertOwnerOrAdmin(request.user, userId);
+
     return this.walletService.findByUserId(
       userId,
     );
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
-  findOne(@Param('id') id: string) {
-    return this.walletService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const wallet = await this.walletService.findOne(id);
+
+    assertOwnerOrAdmin(request.user, wallet.userId);
+
+    return wallet;
   }
 }
