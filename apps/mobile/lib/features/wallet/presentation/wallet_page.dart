@@ -454,6 +454,19 @@ class _WalletPageState extends State<WalletPage> {
   /// Les deux devises supportées (USD, CDF) sont toujours incluses,
   /// même à 0, pour que le résumé les affiche systématiquement toutes
   /// les deux.
+  ///
+  /// Deux points pour que ce total corresponde à l'argent réellement
+  /// sorti du wallet (voir `transactions.service.ts` côté backend) :
+  /// - Un retrait débite le solde dès sa création, avec le statut
+  ///   `PENDING` (en attente du fournisseur de paiement) ; il ne
+  ///   passe à `COMPLETED` qu'une fois confirmé. Ne compter que les
+  ///   retraits `COMPLETED` sous-estimerait donc les dépenses tant
+  ///   qu'un retrait est encore en attente. Seul un retrait `FAILED`
+  ///   est remboursé (fonds rendus) et ne doit pas être compté. Un
+  ///   transfert, lui, est toujours créé `COMPLETED` (débit
+  ///   synchrone), donc ce cas ne le concerne pas.
+  /// - `totalAmount` (montant + frais) est utilisé plutôt que
+  ///   `amount` seul, car les frais sortent eux aussi du solde.
   Map<String, double> _monthlySpendingByCurrency() {
     final now = DateTime.now();
 
@@ -463,11 +476,15 @@ class _WalletPageState extends State<WalletPage> {
     };
 
     for (final transaction in _transactions) {
-      if (transaction['status'] != 'COMPLETED') {
+      if (_isIncomingTransaction(transaction)) {
         continue;
       }
 
-      if (_isIncomingTransaction(transaction)) {
+      final status = transaction['status'];
+      final isWithdrawalHeld =
+          transaction['type'] == 'WITHDRAWAL' && status == 'PENDING';
+
+      if (status != 'COMPLETED' && !isWithdrawalHeld) {
         continue;
       }
 
@@ -482,7 +499,9 @@ class _WalletPageState extends State<WalletPage> {
       }
 
       final currencyCode = _transactionCurrencyCode(transaction);
-      final amount = CurrencyFormatter.parseAmount(transaction['amount']);
+      final amount = CurrencyFormatter.parseAmount(
+        transaction['totalAmount'] ?? transaction['amount'],
+      );
 
       totals[currencyCode] = (totals[currencyCode] ?? 0) + amount;
     }
