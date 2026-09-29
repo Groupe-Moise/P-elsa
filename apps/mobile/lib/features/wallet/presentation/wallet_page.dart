@@ -9,6 +9,7 @@ import '../../../core/currency/currency_formatter.dart';
 import '../../../core/storage/token_storage.dart';
 import '../../../core/widgets/operation_success_dialog.dart';
 import 'deposit_page.dart';
+import 'exchange_page.dart';
 import 'transaction_history_page.dart';
 import 'transfer_page.dart';
 import 'withdrawal_page.dart';
@@ -355,6 +356,60 @@ class _WalletPageState extends State<WalletPage> {
     }
 
     await _loadWallet();
+  }
+
+  Future<void> _openExchange() async {
+    final balances = _balances();
+
+    final currentCurrencyCode = CurrencyFormatter.codeFromWallet(
+      balances[_selectedBalanceIndex],
+    );
+
+    final result = await Navigator.of(context).push<ExchangeResult>(
+      MaterialPageRoute(
+        builder: (_) => ExchangePage(
+          initialCurrencyCode: currentCurrencyCode,
+          availableBalances: _availableBalances(balances),
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    await _loadWallet(
+      preferredCurrencyCode: result.toCurrencyCode,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    await OperationSuccessDialog.show(
+      context,
+      title: 'Conversion effectuée',
+      message:
+      '${CurrencyFormatter.formatAmount(result.amount)} '
+          '${result.fromCurrencyCode} converti(s) en '
+          '${CurrencyFormatter.formatAmount(result.convertedAmount)} '
+          '${result.toCurrencyCode} '
+          '(taux : 1 ${result.fromCurrencyCode} = '
+          '${CurrencyFormatter.formatAmount(result.rate)} '
+          '${result.toCurrencyCode}).',
+      details: [
+        MapEntry(
+          'Nouveau solde ${result.fromCurrencyCode}',
+          '${CurrencyFormatter.symbolFor(result.fromCurrencyCode)} '
+              '${CurrencyFormatter.formatAmount(result.fromBalance)}',
+        ),
+        MapEntry(
+          'Nouveau solde ${result.toCurrencyCode}',
+          '${CurrencyFormatter.symbolFor(result.toCurrencyCode)} '
+              '${CurrencyFormatter.formatAmount(result.toBalance)}',
+        ),
+      ],
+    );
   }
 
   Future<void> _openTransactionHistory() async {
@@ -777,7 +832,7 @@ class _WalletPageState extends State<WalletPage> {
               child: _ActionCard(
                 icon: Icons.currency_exchange,
                 label: 'Bureau de change',
-                onTap: () => _showComingSoon('Bureau de change'),
+                onTap: _openExchange,
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
               ),
@@ -918,9 +973,9 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   /// Taux de change USD -> CDF, chargé depuis `GET /exchange/rate`
-  /// (voir `_loadExchangeRate`) : configuré par un admin en base, plus
-  /// une valeur fixe. L'écran de conversion lui-même (bureau de
-  /// change) n'est pas encore développé, d'où le "bientôt" au tap.
+  /// (voir `_loadExchangeRate`) : configuré par un admin en base,
+  /// plus une valeur fixe. Le tap ouvre l'écran de conversion
+  /// (`ExchangePage`, voir `_openExchange`).
   Widget _buildExchangeRateCard(BuildContext context) {
     final rate = _exchangeRateUsdToCdf;
 
@@ -933,7 +988,7 @@ class _WalletPageState extends State<WalletPage> {
       color: AppColors.surfaceVariant,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _showComingSoon('Bureau de change'),
+        onTap: _openExchange,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
