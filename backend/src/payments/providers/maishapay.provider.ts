@@ -333,20 +333,27 @@ export class MaishaPayProvider implements PaymentProvider {
         : fallbackReference;
 
     /**
-     * Réponse inattendue (pas de transactionId du tout) : on ne peut
-     * pas savoir ce qui s'est passé côté MaishaPay. On refuse plutôt
-     * que de risquer un faux positif.
+     * Réponse inattendue (pas de transactionId du tout) : soit une
+     * réponse d'erreur métier renvoyée AVANT la création de la
+     * transaction chez MaishaPay (ex. { status_code: 403, title:
+     * "Insufficient Balance", errors: {...} } quand le compte
+     * marchand n'a pas assez de solde pour un retrait), soit une
+     * réponse vraiment inattendue. On refuse plutôt que de risquer un
+     * faux positif, mais on essaie d'abord d'en tirer un message
+     * exploitable (voir extractBusinessErrorMessage).
      */
     if (rawTransactionId === undefined || rawTransactionId === null) {
       const description =
-        typeof response?.transactionDescription === 'string'
+        this.extractBusinessErrorMessage(response) ??
+        (typeof response?.transactionDescription === 'string'
           ? response.transactionDescription
-          : 'Réponse inattendue de MaishaPay (paramètres invalides ?).';
+          : 'Réponse inattendue de MaishaPay (paramètres invalides ?).');
 
       return {
         status: 'FAILED',
         providerReference,
         failureReason: description,
+        awaitingFloat: this.isInsufficientFloatResponse(response),
       };
     }
 
@@ -362,6 +369,58 @@ export class MaishaPayProvider implements PaymentProvider {
               : 'Opération refusée par MaishaPay.')
           : undefined,
     };
+  }
+
+  /**
+   * MaishaPay renvoie, pour une requête refusée AVANT même la
+   * création d'une transaction chez eux (ex. solde marchand
+   * insuffisant pour un retrait), une forme différente de celle
+   * utilisée pour un résultat définitif (transactionStatus /
+   * transactionDescription) : { status_code, title, errors: { <champ>
+   * : "<message>" } }. On en tire le message le plus lisible possible
+   * pour failureReason (ex. "Insufficient Balance : Solde
+   * insuffisant. Disponible: 0.00000000, Requis: 10350"), plutôt que
+   * le message générique utilisé auparavant faute de mieux.
+   */
+  private extractBusinessErrorMessage(
+    response: Record<string, unknown>,
+  ): string | undefined {
+    const title =
+      typeof response?.title === 'string' ? response.title : undefined;
+
+    const errors = response?.errors;
+    const firstErrorMessage =
+      errors && typeof errors === 'object'
+        ? Object.values(errors as Record<string, unknown>).find(
+            (value): value is string => typeof value === 'string',
+          )
+        : undefined;
+
+    if (title && firstErrorMessage) {
+      return `${title} : ${firstErrorMessage}`;
+    }
+
+    return title ?? firstErrorMessage;
+  }
+
+  /**
+   * Détecte la réponse MaishaPay renvoyée quand le compte marchand
+   * utilisé pour les retraits (float B2C) n'a pas assez de solde pour
+   * exécuter l'opération : { status_code: 403, title: "Insufficient
+   * Balance", errors: {...} }. Ce n'est pas un refus lié au client :
+   * la transaction doit rester EN ATTENTE côté P-ELSA (fonds
+   * toujours bloqués), pas être traitée comme un échec définitif
+   * remboursé (voir PaymentService.applyResult).
+   */
+  private isInsufficientFloatResponse(
+    response: Record<string, unknown>,
+  ): boolean {
+    const title =
+      typeof response?.title === 'string'
+        ? response.title.toLowerCase()
+        : '';
+
+    return title.includes('insufficient balance');
   }
 
   private mapStatus(value: unknown): ProviderStatus {

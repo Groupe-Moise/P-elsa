@@ -319,6 +319,46 @@ export class PaymentService {
       return false;
     }
 
+    /**
+     * Retrait refusé uniquement faute de solde marchand chez le
+     * fournisseur (float B2C insuffisant, voir
+     * MaishaPayProvider.isInsufficientFloatResponse) : ce n'est pas
+     * un échec définitif côté client, donc on ne rembourse pas et on
+     * ne bascule pas en ÉCHOUÉ. La transaction reste EN ATTENTE,
+     * fonds toujours bloqués, avec le motif renvoyé par le
+     * fournisseur conservé dans failureReason à titre informatif
+     * (visible par l'administration via GET /admin/transactions) —
+     * à relancer une fois le compte marchand réapprovisionné (POST
+     * /admin/transactions/:id/retry, déjà en place).
+     */
+    if (result.status === 'FAILED' && result.awaitingFloat) {
+      const pending = await this.prisma.transaction.findUnique({
+        where: {
+          id: transactionId,
+        },
+      });
+
+      if (
+        pending?.type === TransactionType.WITHDRAWAL &&
+        pending.status === TransactionStatus.PENDING
+      ) {
+        await this.prisma.transaction.updateMany({
+          where: {
+            id: transactionId,
+            status: TransactionStatus.PENDING,
+          },
+          data: {
+            providerReference: result.providerReference,
+            failureReason:
+              result.failureReason ??
+              'Retrait en attente : solde du fournisseur insuffisant sur ce réseau.',
+          },
+        });
+
+        return false;
+      }
+    }
+
     const finalStatus =
       result.status === 'COMPLETED'
         ? TransactionStatus.COMPLETED

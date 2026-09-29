@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/currency/currency_formatter.dart';
 import '../../../core/storage/token_storage.dart';
 
 class TransactionHistoryPage extends StatefulWidget {
@@ -195,25 +196,12 @@ class _TransactionHistoryPageState
     return false;
   }
 
-  double _parseAmount(dynamic value) {
-    if (value == null) {
-      return 0;
-    }
-
-    return double.tryParse(
-      value.toString(),
-    ) ??
-        0;
-  }
-
   String _formatAmount(dynamic amount) {
-    return _parseAmount(amount)
-        .toStringAsFixed(2);
+    return CurrencyFormatter.formatAmount(amount);
   }
 
   String _formatFee(dynamic fee) {
-    return _parseAmount(fee)
-        .toStringAsFixed(2);
+    return CurrencyFormatter.formatAmount(fee);
   }
 
   String _currencyCode(
@@ -239,38 +227,13 @@ class _TransactionHistoryPageState
       }
     }
 
-    final currency = wallet?['currency'];
-
-    if (currency is Map<String, dynamic>) {
-      final code = currency['code'];
-
-      if (code is String && code.isNotEmpty) {
-        return code;
-      }
-    }
-
-    return 'USD';
+    return CurrencyFormatter.codeFromWallet(wallet);
   }
 
   String _currencySymbol(
       String currencyCode,
       ) {
-    switch (currencyCode) {
-      case 'USD':
-        return '\$';
-
-      case 'CDF':
-        return 'FC';
-
-      case 'ZMW':
-        return 'ZK';
-
-      case 'XAF':
-        return 'FCFA';
-
-      default:
-        return currencyCode;
-    }
+    return CurrencyFormatter.symbolFor(currencyCode);
   }
 
   String _formatDate(dynamic value) {

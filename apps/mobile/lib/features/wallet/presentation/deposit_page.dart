@@ -1,12 +1,23 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/currency/currency_formatter.dart';
+import '../../../core/payment/network_detector.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/widgets/currency_toggle.dart';
+import '../../../core/widgets/payment_mode_selector.dart';
+import '../../../core/widgets/pin_dialog.dart';
 
 class DepositPage extends StatefulWidget {
   const DepositPage({
     super.key,
+    this.initialCurrencyCode = 'USD',
   });
+
+  /// Devise pré-sélectionnée à l'ouverture de l'écran (ex. la devise
+  /// actuellement affichée sur le dashboard).
+  final String initialCurrencyCode;
 
   @override
   State<DepositPage> createState() => _DepositPageState();
@@ -21,8 +32,26 @@ class _DepositPageState extends State<DepositPage> {
   final _apiClient = ApiClient();
   final _tokenStorage = TokenStorage();
 
-  String _selectedNetwork = 'Airtel Money';
+  PaymentMode _paymentMode = PaymentMode.mobile;
+
+  /// Réseau détecté automatiquement à partir du numéro saisi (voir
+  /// `NetworkDetector`). `null` tant qu'aucun préfixe connu ne
+  /// correspond.
+  String? _detectedNetwork;
+
+  late String _selectedCurrencyCode;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _selectedCurrencyCode = CurrencyFormatter.selectableCurrencies.any(
+      (entry) => entry.key == widget.initialCurrencyCode,
+    )
+        ? widget.initialCurrencyCode
+        : CurrencyFormatter.selectableCurrencies.first.key;
+  }
 
   @override
   void dispose() {
@@ -31,12 +60,24 @@ class _DepositPageState extends State<DepositPage> {
     super.dispose();
   }
 
+  void _onPhoneChanged(String value) {
+    setState(() {
+      _detectedNetwork = NetworkDetector.detectFromPhone(value);
+    });
+  }
+
   Future<void> _submitDeposit() async {
     if (_isLoading) {
       return;
     }
 
     if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    final network = _detectedNetwork;
+
+    if (network == null) {
       return;
     }
 
@@ -98,10 +139,11 @@ class _DepositPageState extends State<DepositPage> {
         body: <String, dynamic>{
           'amount': amount,
           'pin': pin,
-          'network': _selectedNetwork,
+          'network': network,
           'phone': _phoneController.text.trim(),
+          'currencyCode': _selectedCurrencyCode,
           'description':
-          'Dépôt via $_selectedNetwork depuis '
+          'Dépôt via $network depuis '
               '${_phoneController.text.trim()}',
         },
       );
@@ -112,12 +154,17 @@ class _DepositPageState extends State<DepositPage> {
 
       final balance = response['balance'];
 
+      final currencyCode = response['currency'] is String
+          ? response['currency'] as String
+          : _selectedCurrencyCode;
+
       Navigator.of(context).pop(
         DepositResult(
           amount: amount,
-          network: _selectedNetwork,
+          network: network,
           phone: _phoneController.text.trim(),
           balance: balance,
+          currencyCode: currencyCode,
         ),
       );
     } on ApiException catch (error) {
@@ -144,10 +191,9 @@ class _DepositPageState extends State<DepositPage> {
   }
 
   Future<String?> _showPinDialog() {
-    return showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const _DepositPinDialog(),
+    return PinDialog.show(
+      context,
+      title: 'Confirmer le dépôt',
     );
   }
 
@@ -205,8 +251,8 @@ class _DepositPageState extends State<DepositPage> {
                     const SizedBox(height: 8),
 
                     Text(
-                      'Choisissez votre réseau, indiquez le numéro '
-                          'et le montant à déposer.',
+                      'Choisissez un mode de paiement, indiquez le '
+                          'numéro et le montant à déposer.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium,
                     ),
@@ -214,7 +260,7 @@ class _DepositPageState extends State<DepositPage> {
                     const SizedBox(height: 32),
 
                     Text(
-                      'Réseau de paiement',
+                      'Mode de paiement',
                       style:
                       theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
@@ -223,82 +269,74 @@ class _DepositPageState extends State<DepositPage> {
 
                     const SizedBox(height: 12),
 
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedNetwork,
-                      decoration: const InputDecoration(
-                        labelText: 'Réseau',
-                        prefixIcon: Icon(
-                          Icons.phone_android_outlined,
-                        ),
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'Airtel Money',
-                          child: Text('Airtel Money'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'M-Pesa',
-                          child: Text('M-Pesa'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Orange Money',
-                          child: Text('Orange Money'),
-                        ),
-                      ],
+                    PaymentModeSelector(
+                      selectedMode: _paymentMode,
                       onChanged: _isLoading
-                          ? null
-                          : (value) {
-                        if (value == null) {
-                          return;
-                        }
-
+                          ? (_) {}
+                          : (mode) {
                         setState(() {
-                          _selectedNetwork = value;
+                          _paymentMode = mode;
                         });
                       },
                     ),
 
-                    const SizedBox(height: 24),
+                    if (_paymentMode == PaymentMode.mobile) ...[
+                      const SizedBox(height: 24),
 
-                    Text(
-                      'Numéro de paiement',
-                      style:
-                      theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    TextFormField(
-                      controller: _phoneController,
-                      enabled: !_isLoading,
-                      keyboardType: TextInputType.phone,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'Numéro de téléphone',
-                        hintText: '+243...',
-                        prefixIcon: Icon(
-                          Icons.phone_outlined,
+                      Text(
+                        'Numéro de paiement',
+                        style:
+                        theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
-                        border: OutlineInputBorder(),
                       ),
-                      validator: (value) {
-                        final phone =
-                            value?.trim() ?? '';
 
-                        if (phone.isEmpty) {
-                          return 'Veuillez saisir le numéro de paiement.';
-                        }
+                      const SizedBox(height: 12),
 
-                        if (phone.length < 9) {
-                          return 'Veuillez saisir un numéro valide.';
-                        }
+                      TextFormField(
+                        controller: _phoneController,
+                        enabled: !_isLoading,
+                        keyboardType: TextInputType.phone,
+                        textInputAction: TextInputAction.next,
+                        onChanged: _onPhoneChanged,
+                        decoration: const InputDecoration(
+                          labelText: 'Numéro de téléphone',
+                          hintText: '+243...',
+                          prefixIcon: Icon(
+                            Icons.phone_outlined,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (value) {
+                          final phone =
+                              value?.trim() ?? '';
 
-                        return null;
-                      },
-                    ),
+                          if (phone.isEmpty) {
+                            return 'Veuillez saisir le numéro de paiement.';
+                          }
+
+                          if (phone.length < 9) {
+                            return 'Veuillez saisir un numéro valide.';
+                          }
+
+                          if (_detectedNetwork == null) {
+                            return 'Numéro non reconnu. Vérifiez le '
+                                'numéro saisi.';
+                          }
+
+                          return null;
+                        },
+                      ),
+
+                      if (_phoneController.text
+                          .trim()
+                          .isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        _NetworkHint(
+                          network: _detectedNetwork,
+                        ),
+                      ],
+                    ],
 
                     const SizedBox(height: 24),
 
@@ -326,13 +364,25 @@ class _DepositPageState extends State<DepositPage> {
                           _submitDeposit();
                         }
                       },
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Montant',
                         hintText: 'Ex. 50',
-                        prefixIcon: Icon(
-                          Icons.attach_money,
+                        prefixText:
+                        '${CurrencyFormatter.compactLabel(
+                          _selectedCurrencyCode,
+                        )} ',
+                        suffix: CurrencyToggle(
+                          selectedCurrencyCode:
+                          _selectedCurrencyCode,
+                          enabled: !_isLoading,
+                          onChanged: (currencyCode) {
+                            setState(() {
+                              _selectedCurrencyCode =
+                                  currencyCode;
+                            });
+                          },
                         ),
-                        border: OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
                       ),
                       validator: (value) {
                         final text =
@@ -402,130 +452,53 @@ class _DepositPageState extends State<DepositPage> {
   }
 }
 
-class _DepositPinDialog extends StatefulWidget {
-  const _DepositPinDialog();
+/// Petit indicateur affiché sous le champ de numéro, confirmant le
+/// réseau détecté automatiquement (ou signalant qu'aucun réseau
+/// connu ne correspond au numéro saisi).
+class _NetworkHint extends StatelessWidget {
+  const _NetworkHint({
+    required this.network,
+  });
 
-  @override
-  State<_DepositPinDialog> createState() =>
-      _DepositPinDialogState();
-}
-
-class _DepositPinDialogState
-    extends State<_DepositPinDialog> {
-  final _pinController = TextEditingController();
-  final _pinFormKey = GlobalKey<FormState>();
-
-  bool _isObscured = true;
-  bool _isClosing = false;
-
-  @override
-  void dispose() {
-    _pinController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _confirm() async {
-    if (_isClosing) {
-      return;
-    }
-
-    if (!_pinFormKey.currentState!.validate()) {
-      return;
-    }
-
-    final pin = _pinController.text.trim();
-
-    setState(() {
-      _isClosing = true;
-    });
-
-    FocusScope.of(context).unfocus();
-
-    await Future<void>.delayed(
-      const Duration(milliseconds: 100),
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    Navigator.of(context).pop(pin);
-  }
+  final String? network;
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Confirmer le dépôt'),
-      content: Form(
-        key: _pinFormKey,
-        child: TextFormField(
-          controller: _pinController,
-          autofocus: true,
-          obscureText: _isObscured,
-          enabled: !_isClosing,
-          keyboardType: TextInputType.number,
-          textInputAction: TextInputAction.done,
-          maxLength: 6,
-          onFieldSubmitted: (_) {
-            if (!_isClosing) {
-              _confirm();
-            }
-          },
-          decoration: InputDecoration(
-            labelText: 'PIN',
-            hintText: '••••••',
-            prefixIcon: const Icon(
-              Icons.lock_outline,
-            ),
-            suffixIcon: IconButton(
-              onPressed: _isClosing
-                  ? null
-                  : () {
-                setState(() {
-                  _isObscured =
-                  !_isObscured;
-                });
-              },
-              icon: Icon(
-                _isObscured
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
+    final isRecognized = network != null;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Row(
+        children: [
+          Icon(
+            isRecognized
+                ? Icons.check_circle_outline
+                : Icons.error_outline,
+            size: 16,
+            color: isRecognized
+                ? AppColors.success
+                : AppColors.warning,
+          ),
+
+          const SizedBox(width: 6),
+
+          Expanded(
+            child: Text(
+              isRecognized
+                  ? 'Réseau détecté : $network'
+                  : 'Réseau non reconnu pour ce numéro.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(
+                color: isRecognized
+                    ? AppColors.success
+                    : AppColors.warning,
               ),
             ),
-            border: const OutlineInputBorder(),
-            counterText: '',
           ),
-          validator: (value) {
-            final pin = value?.trim() ?? '';
-
-            if (pin.isEmpty) {
-              return 'Veuillez saisir votre PIN.';
-            }
-
-            if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
-              return 'Le PIN doit contenir 6 chiffres.';
-            }
-
-            return null;
-          },
-        ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _isClosing
-              ? null
-              : () {
-            FocusScope.of(context).unfocus();
-            Navigator.of(context).pop();
-          },
-          child: const Text('Annuler'),
-        ),
-        ElevatedButton(
-          onPressed:
-          _isClosing ? null : _confirm,
-          child: const Text('Confirmer'),
-        ),
-      ],
     );
   }
 }
@@ -536,10 +509,12 @@ class DepositResult {
     required this.network,
     required this.phone,
     required this.balance,
+    required this.currencyCode,
   });
 
   final double amount;
   final String network;
   final String phone;
   final dynamic balance;
+  final String currencyCode;
 }

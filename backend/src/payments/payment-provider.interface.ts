@@ -42,6 +42,18 @@ export interface ProviderResult {
 
   /** Renseigné quand status vaut FAILED. */
   failureReason?: string;
+
+  /**
+   * Vrai uniquement quand status vaut FAILED **et** que le refus
+   * vient d'un solde marchand insuffisant chez le fournisseur (le
+   * compte utilisé pour verser les retraits, pas celui du client) —
+   * jamais d'un problème côté client. PaymentService garde alors la
+   * transaction EN ATTENTE (fonds toujours bloqués) au lieu de la
+   * classer en échec définitif et de rembourser : un administrateur
+   * pourra la relancer une fois le compte marchand réapprovisionné
+   * (POST /admin/transactions/:id/retry).
+   */
+  awaitingFloat?: boolean;
 }
 
 /**

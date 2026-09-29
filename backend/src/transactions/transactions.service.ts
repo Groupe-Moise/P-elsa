@@ -861,6 +861,12 @@ export class TransactionsService {
         created.transactionId,
       );
 
+      /**
+       * Un dépôt ÉCHOUÉ (refusé par le fournisseur) ne doit jamais
+       * ressembler à un succès : voir assertNotFailed.
+       */
+      this.assertNotFailed(settled.transaction);
+
       const result = {
         transaction: settled.transaction,
 
@@ -1193,6 +1199,20 @@ export class TransactionsService {
         created.transactionId,
       );
 
+      /**
+       * Un retrait ÉCHOUÉ (refusé par le fournisseur, fonds déjà
+       * remboursés) ne doit jamais ressembler à un succès : voir
+       * assertNotFailed.
+       *
+       * Un retrait resté EN ATTENTE faute de solde marchand chez le
+       * fournisseur (voir PaymentService.applyResult) n'est PAS un
+       * échec : il passe ce contrôle sans erreur, avec
+       * settled.transaction.status toujours à PENDING. L'app doit
+       * alors afficher un état "en attente de traitement" plutôt
+       * qu'une confirmation, en se basant sur ce statut.
+       */
+      this.assertNotFailed(settled.transaction);
+
       const result = {
         transaction: settled.transaction,
 
@@ -1441,5 +1461,34 @@ export class TransactionsService {
         .toUpperCase();
 
     return `TX-${timestamp}-${random}`;
+  }
+
+  /**
+   * =========================================================
+   * REFUS DÉFINITIF DU FOURNISSEUR
+   * =========================================================
+   *
+   * Avant ce correctif, un dépôt ou un retrait ÉCHOUÉ (refusé par le
+   * fournisseur de paiement) était quand même renvoyé avec un code
+   * HTTP 200 : l'app ne recevait aucune erreur alors que l'argent
+   * n'avait pas bougé (ou avait été remboursé pour un retrait), ce
+   * qui donnait l'illusion trompeuse d'une opération réussie.
+   *
+   * Une transaction restée EN ATTENTE (fournisseur injoignable, ou
+   * retrait mis en attente faute de solde marchand — voir
+   * PaymentService.applyResult) n'est PAS un échec : elle passe ce
+   * contrôle sans erreur, l'app affichant alors un état "en attente"
+   * plutôt qu'une confirmation ou une erreur.
+   */
+  private assertNotFailed(transaction: {
+    status: TransactionStatus;
+    failureReason: string | null;
+  }): void {
+    if (transaction.status === TransactionStatus.FAILED) {
+      throw new BadRequestException(
+        transaction.failureReason ??
+          'L’opération a été refusée par le fournisseur de paiement.',
+      );
+    }
   }
 }

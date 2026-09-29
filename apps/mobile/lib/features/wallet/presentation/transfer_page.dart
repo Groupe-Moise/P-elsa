@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/currency/currency_formatter.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/widgets/operation_success_dialog.dart';
+import '../../../core/widgets/pin_dialog.dart';
 
 class TransferPage extends StatefulWidget {
   const TransferPage({
@@ -313,18 +315,13 @@ class _TransferPageState extends State<TransferPage> {
       return null;
     }
 
-    final result = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return _PinDialog(
-          amountText:
-          '${_formatAmount(_amountValue() ?? 0)} ${_senderCurrency()}',
-        );
-      },
+    return PinDialog.show(
+      context,
+      title: 'Confirmer le transfert',
+      description:
+      'Entrez votre PIN pour autoriser l’envoi de '
+          '${_formatAmount(_amountValue() ?? 0)} ${_senderCurrency()}.',
     );
-
-    return result;
   }
 
   Future<void> _executeTransfer({
@@ -437,86 +434,23 @@ class _TransferPageState extends State<TransferPage> {
       return;
     }
 
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          icon: const Icon(
-            Icons.check_circle_outline,
-            color: Colors.green,
-            size: 56,
+    await OperationSuccessDialog.show(
+      context,
+      title: 'Transfert effectué',
+      message:
+      '${_formatAmount(_amountValue() ?? 0)} '
+          '${_senderCurrency()} ont été envoyés à '
+          '${_recipientFullName()}.',
+      details: [
+        if (reference.isNotEmpty)
+          MapEntry('Référence', reference),
+        if (senderBalance != null)
+          MapEntry(
+            'Nouveau solde',
+            '${_senderCurrencySymbol()} '
+                '${_formatAmount(senderBalance)}',
           ),
-          title: const Text(
-            'Transfert effectué',
-            textAlign: TextAlign.center,
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${_formatAmount(_amountValue() ?? 0)} '
-                    '${_senderCurrency()} ont été envoyés à '
-                    '${_recipientFullName()}.',
-                textAlign: TextAlign.center,
-              ),
-              if (reference.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text(
-                  'Référence',
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .bodySmall,
-                ),
-                const SizedBox(height: 4),
-                SelectableText(
-                  reference,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-              if (senderBalance != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  'Nouveau solde',
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .bodySmall,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatAmount(senderBalance)} '
-                      '${_senderCurrency()}',
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                },
-                child: const Text(
-                  'Terminé',
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+      ],
     );
 
     if (!mounted) {
@@ -562,35 +496,15 @@ class _TransferPageState extends State<TransferPage> {
   }
 
   String _formatAmount(double amount) {
-    return amount.toStringAsFixed(2);
+    return CurrencyFormatter.formatAmount(amount);
   }
 
   String _senderCurrency() {
-    final currency = _wallet?['currency'];
-
-    if (currency is Map<String, dynamic>) {
-      final code = currency['code'];
-
-      if (code is String && code.isNotEmpty) {
-        return code;
-      }
-    }
-
-    return 'USD';
+    return CurrencyFormatter.codeFromWallet(_wallet);
   }
 
   String _senderCurrencyName() {
-    final currency = _wallet?['currency'];
-
-    if (currency is Map<String, dynamic>) {
-      final name = currency['name'];
-
-      if (name is String && name.isNotEmpty) {
-        return name;
-      }
-    }
-
-    return _senderCurrency();
+    return CurrencyFormatter.nameFromWallet(_wallet);
   }
 
   String _senderCurrencySymbol() {
@@ -640,40 +554,22 @@ class _TransferPageState extends State<TransferPage> {
     return _phoneController.text.trim();
   }
 
-  String _recipientCurrency() {
+  Map<String, dynamic>? _recipientWallet() {
     final wallet = _recipient?['wallet'];
 
     if (wallet is Map<String, dynamic>) {
-      final currency = wallet['currency'];
-
-      if (currency is Map<String, dynamic>) {
-        final code = currency['code'];
-
-        if (code is String && code.isNotEmpty) {
-          return code;
-        }
-      }
+      return wallet;
     }
 
-    return 'USD';
+    return null;
+  }
+
+  String _recipientCurrency() {
+    return CurrencyFormatter.codeFromWallet(_recipientWallet());
   }
 
   String _recipientCurrencyName() {
-    final wallet = _recipient?['wallet'];
-
-    if (wallet is Map<String, dynamic>) {
-      final currency = wallet['currency'];
-
-      if (currency is Map<String, dynamic>) {
-        final name = currency['name'];
-
-        if (name is String && name.isNotEmpty) {
-          return name;
-        }
-      }
-    }
-
-    return _recipientCurrency();
+    return CurrencyFormatter.nameFromWallet(_recipientWallet());
   }
 
   String _recipientCurrencySymbol() {
@@ -683,22 +579,7 @@ class _TransferPageState extends State<TransferPage> {
   }
 
   String _currencySymbol(String code) {
-    switch (code) {
-      case 'USD':
-        return '\$';
-
-      case 'CDF':
-        return 'FC';
-
-      case 'ZMW':
-        return 'ZK';
-
-      case 'XAF':
-        return 'FCFA';
-
-      default:
-        return code;
-    }
+    return CurrencyFormatter.symbolFor(code);
   }
 
   String _initials() {
@@ -1514,145 +1395,6 @@ class _TransferPageState extends State<TransferPage> {
             child: const Text(
               'Modifier',
             ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PinDialog extends StatefulWidget {
-  const _PinDialog({
-    required this.amountText,
-  });
-
-  final String amountText;
-
-  @override
-  State<_PinDialog> createState() => _PinDialogState();
-}
-
-class _PinDialogState extends State<_PinDialog> {
-  final _pinController = TextEditingController();
-
-  bool _obscurePin = true;
-  String? _errorMessage;
-
-  @override
-  void dispose() {
-    _pinController.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final pin = _pinController.text.trim();
-
-    if (pin.isEmpty) {
-      setState(() {
-        _errorMessage =
-        'Veuillez saisir votre PIN.';
-      });
-      return;
-    }
-
-    if (!RegExp(r'^\d+$').hasMatch(pin)) {
-      setState(() {
-        _errorMessage =
-        'Le PIN doit contenir uniquement des chiffres.';
-      });
-      return;
-    }
-
-    FocusScope.of(context).unfocus();
-
-    Navigator.of(context).pop(pin);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text(
-        'Confirmer le transfert',
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment:
-        CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Entrez votre PIN pour autoriser '
-                'l’envoi de ${widget.amountText}.',
-          ),
-
-          const SizedBox(height: 20),
-
-          TextField(
-            controller: _pinController,
-            autofocus: true,
-            obscureText: _obscurePin,
-            keyboardType: TextInputType.number,
-            textInputAction:
-            TextInputAction.done,
-            maxLength: 6,
-            inputFormatters: [
-              FilteringTextInputFormatter
-                  .digitsOnly,
-            ],
-            onSubmitted: (_) {
-              _submit();
-            },
-            decoration: InputDecoration(
-              labelText: 'PIN',
-              hintText: 'Votre PIN',
-              prefixIcon: const Icon(
-                Icons.lock_outline,
-              ),
-              suffixIcon: IconButton(
-                onPressed: () {
-                  setState(() {
-                    _obscurePin =
-                    !_obscurePin;
-                  });
-                },
-                icon: Icon(
-                  _obscurePin
-                      ? Icons
-                      .visibility_outlined
-                      : Icons
-                      .visibility_off_outlined,
-                ),
-              ),
-              errorText: _errorMessage,
-              border:
-              const OutlineInputBorder(),
-            ),
-          ),
-
-          const SizedBox(height: 4),
-
-          Text(
-            'Votre PIN reste confidentiel et '
-                'n’est jamais affiché.',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall,
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            FocusScope.of(context).unfocus();
-            Navigator.of(context).pop();
-          },
-          child: const Text(
-            'Annuler',
-          ),
-        ),
-        ElevatedButton(
-          onPressed: _submit,
-          child: const Text(
-            'Confirmer',
           ),
         ),
       ],

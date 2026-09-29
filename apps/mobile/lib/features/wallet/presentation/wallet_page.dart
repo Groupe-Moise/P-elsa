@@ -1,7 +1,12 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/currency/currency_formatter.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/widgets/operation_success_dialog.dart';
 import 'deposit_page.dart';
 import 'transaction_history_page.dart';
 import 'transfer_page.dart';
@@ -23,6 +28,14 @@ class _WalletPageState extends State<WalletPage> {
   bool _isLoading = true;
   String? _errorMessage;
 
+  bool _isBalanceHidden = false;
+
+  /// Devise de la dernière opération effectuée (dépôt/retrait), utilisée
+  /// uniquement pour pré-remplir le sélecteur de devise des formulaires.
+  /// L'affichage du dashboard, lui, montre toujours toutes les devises
+  /// empilées sur une même carte.
+  int _selectedBalanceIndex = 0;
+
   Map<String, dynamic>? _wallet;
   Map<String, dynamic>? _user;
 
@@ -32,7 +45,13 @@ class _WalletPageState extends State<WalletPage> {
     _loadWallet();
   }
 
-  Future<void> _loadWallet() async {
+  /// Recharge le wallet. Si `preferredCurrencyCode` est fourni (ex.
+  /// juste après un dépôt dans une devise donnée), cette devise devient
+  /// la devise pré-sélectionnée pour la prochaine opération ; sinon on
+  /// revient à la première devise du wallet.
+  Future<void> _loadWallet({
+    String? preferredCurrencyCode,
+  }) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -66,6 +85,8 @@ class _WalletPageState extends State<WalletPage> {
             : null;
         _isLoading = false;
       });
+
+      _selectBalanceForCurrency(preferredCurrencyCode);
     } on ApiException catch (error) {
       if (!mounted) {
         return;
@@ -102,10 +123,18 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   Future<void> _openDeposit() async {
+    final balances = _balances();
+
+    final currentCurrencyCode = CurrencyFormatter.codeFromWallet(
+      balances[_selectedBalanceIndex],
+    );
+
     final result =
     await Navigator.of(context).push<DepositResult>(
       MaterialPageRoute(
-        builder: (_) => const DepositPage(),
+        builder: (_) => DepositPage(
+          initialCurrencyCode: currentCurrencyCode,
+        ),
       ),
     );
 
@@ -113,29 +142,48 @@ class _WalletPageState extends State<WalletPage> {
       return;
     }
 
-    await _loadWallet();
+    await _loadWallet(
+      preferredCurrencyCode: result.currencyCode,
+    );
 
     if (!mounted) {
       return;
     }
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Dépôt de ${result.amount.toStringAsFixed(2)} '
-                'via ${result.network} effectué avec succès.',
-          ),
+    final currencySymbol = CurrencyFormatter.symbolFor(
+      result.currencyCode,
+    );
+
+    await OperationSuccessDialog.show(
+      context,
+      title: 'Dépôt effectué',
+      message:
+      '${CurrencyFormatter.formatAmount(result.amount)} '
+          '${result.currencyCode} ont été déposés via '
+          '${result.network}.',
+      details: [
+        MapEntry(
+          'Nouveau solde',
+          '$currencySymbol '
+              '${CurrencyFormatter.formatAmount(result.balance)}',
         ),
-      );
+      ],
+    );
   }
 
   Future<void> _openWithdrawal() async {
+    final balances = _balances();
+
+    final currentCurrencyCode = CurrencyFormatter.codeFromWallet(
+      balances[_selectedBalanceIndex],
+    );
+
     final result =
     await Navigator.of(context).push<WithdrawalResult>(
       MaterialPageRoute(
-        builder: (_) => const WithdrawalPage(),
+        builder: (_) => WithdrawalPage(
+          initialCurrencyCode: currentCurrencyCode,
+        ),
       ),
     );
 
@@ -143,23 +191,62 @@ class _WalletPageState extends State<WalletPage> {
       return;
     }
 
-    await _loadWallet();
+    await _loadWallet(
+      preferredCurrencyCode: result.currencyCode,
+    );
 
     if (!mounted) {
       return;
     }
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Retrait de ${result.amount.toStringAsFixed(2)} '
-                'vers ${result.phone} effectué avec succès. '
-                'Frais : ${result.fee.toStringAsFixed(2)}.',
-          ),
-        ),
+    final currencySymbol = CurrencyFormatter.symbolFor(
+      result.currencyCode,
+    );
+
+    final details = [
+      MapEntry(
+        'Frais',
+        '$currencySymbol '
+            '${CurrencyFormatter.formatAmount(result.fee)}',
+      ),
+      MapEntry(
+        'Nouveau solde',
+        '$currencySymbol '
+            '${CurrencyFormatter.formatAmount(result.balance)}',
+      ),
+    ];
+
+    /// Le retrait peut rester en attente faute de solde marchand
+    /// suffisant chez le fournisseur pour ce réseau : les fonds sont
+    /// bloqués (le nouveau solde ci-dessus en tient déjà compte), mais
+    /// le versement n'est pas encore finalisé. On l'indique clairement
+    /// plutôt que d'afficher une confirmation trompeuse.
+    if (result.pending) {
+      await OperationSuccessDialog.show(
+        context,
+        title: 'Retrait en attente',
+        message:
+        '${CurrencyFormatter.formatAmount(result.amount)} '
+            '${result.currencyCode} vers ${result.phone} via '
+            '${result.network} sont en attente de traitement. '
+            'Vous serez informé dès que le retrait sera finalisé.',
+        details: details,
+        icon: Icons.hourglass_top_outlined,
+        iconColor: AppColors.warning,
       );
+
+      return;
+    }
+
+    await OperationSuccessDialog.show(
+      context,
+      title: 'Retrait effectué',
+      message:
+      '${CurrencyFormatter.formatAmount(result.amount)} '
+          '${result.currencyCode} ont été envoyés vers '
+          '${result.phone} via ${result.network}.',
+      details: details,
+    );
   }
 
   Future<void> _openTransfer() async {
@@ -184,53 +271,54 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  String _formatBalance(dynamic balance) {
-    if (balance == null) {
-      return '0.00';
-    }
+  /// Renvoie un solde par devise, à partir du tableau `balances`
+  /// renvoyé par `/wallets/me` (voir wallet.mapper.ts côté backend).
+  /// Si ce tableau est absent (ancienne réponse API), on retombe sur
+  /// le solde unique placé à la racine, pour ne rien casser.
+  List<Map<String, dynamic>> _balances() {
+    final balances = _wallet?['balances'];
 
-    final value = double.tryParse(
-      balance.toString(),
-    );
+    if (balances is List) {
+      final parsed = balances
+          .whereType<Map<String, dynamic>>()
+          .toList();
 
-    if (value == null) {
-      return '0.00';
-    }
-
-    return value.toStringAsFixed(2);
-  }
-
-  String _currencyCode() {
-    final currency = _wallet?['currency'];
-
-    if (currency is Map<String, dynamic>) {
-      final code = currency['code'];
-
-      if (code is String && code.isNotEmpty) {
-        return code;
+      if (parsed.isNotEmpty) {
+        return parsed;
       }
     }
 
-    return 'USD';
+    return [
+      {
+        'balance': _wallet?['balance'],
+        'currency': _wallet?['currency'],
+      },
+    ];
   }
 
-  String _currencySymbol() {
-    switch (_currencyCode()) {
-      case 'USD':
-        return '\$';
+  /// Retient `currencyCode` (celle de l'opération qui vient d'être
+  /// effectuée) comme devise pré-sélectionnée pour la prochaine
+  /// opération, ou revient à la première devise si `currencyCode` est
+  /// absent ou introuvable.
+  void _selectBalanceForCurrency(String? currencyCode) {
+    final balances = _balances();
 
-      case 'CDF':
-        return 'FC';
+    var index = 0;
 
-      case 'ZMW':
-        return 'ZK';
+    if (currencyCode != null) {
+      final match = balances.indexWhere(
+            (entry) =>
+        CurrencyFormatter.codeFromWallet(entry) == currencyCode,
+      );
 
-      case 'XAF':
-        return 'FCFA';
-
-      default:
-        return _currencyCode();
+      if (match != -1) {
+        index = match;
+      }
     }
+
+    setState(() {
+      _selectedBalanceIndex = index;
+    });
   }
 
   @override
@@ -301,6 +389,8 @@ class _WalletPageState extends State<WalletPage> {
         ? firstName
         : 'Utilisateur';
 
+    final balances = _balances();
+
     return ListView(
       physics:
       const AlwaysScrollableScrollPhysics(),
@@ -316,74 +406,26 @@ class _WalletPageState extends State<WalletPage> {
           ),
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: 4),
 
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Solde disponible',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium,
-                ),
-
-                const SizedBox(height: 12),
-
-                Row(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      _currencySymbol(),
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Text(
-                      _formatBalance(
-                        _wallet?['balance'],
-                      ),
-                      style: Theme.of(context)
-                          .textTheme
-                          .displaySmall
-                          ?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 8),
-
-                Text(
-                  _currencyCode(),
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall,
-                ),
-              ],
-            ),
-          ),
+        Text(
+          'Voici un aperçu de votre compte.',
+          style: Theme.of(context).textTheme.bodyMedium,
         ),
 
         const SizedBox(height: 24),
 
-        const Text(
+        _buildBalancesCard(context, balances),
+
+        const SizedBox(height: 28),
+
+        Text(
           'Actions',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(
+            color: AppColors.textPrimary,
           ),
         ),
 
@@ -396,6 +438,8 @@ class _WalletPageState extends State<WalletPage> {
                 icon: Icons.add_circle_outline,
                 label: 'Dépôt',
                 onTap: _openDeposit,
+                iconColor: AppColors.success,
+                backgroundColor: AppColors.successContainer,
               ),
             ),
 
@@ -406,6 +450,8 @@ class _WalletPageState extends State<WalletPage> {
                 icon: Icons.arrow_upward,
                 label: 'Retrait',
                 onTap: _openWithdrawal,
+                iconColor: AppColors.error,
+                backgroundColor: AppColors.errorContainer,
               ),
             ),
           ],
@@ -420,6 +466,8 @@ class _WalletPageState extends State<WalletPage> {
                 icon: Icons.send_outlined,
                 label: 'Transfert',
                 onTap: _openTransfer,
+                iconColor: AppColors.primary,
+                backgroundColor: AppColors.primaryContainer,
               ),
             ),
 
@@ -430,11 +478,199 @@ class _WalletPageState extends State<WalletPage> {
                 icon: Icons.history,
                 label: 'Historique',
                 onTap: _openTransactionHistory,
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
               ),
             ),
           ],
         ),
       ],
+    );
+  }
+
+  /// Carte unique regroupant le solde de chaque devise du wallet, l'une
+  /// au-dessus de l'autre (ex. USD en haut, CDF en dessous), plutôt
+  /// qu'un carrousel à faire défiler. La carte garde toute la largeur
+  /// disponible ; c'est sa hauteur (padding et espacements verticaux)
+  /// qui est resserrée pour ne pas être trop imposante.
+  Widget _buildBalancesCard(
+      BuildContext context,
+      List<Map<String, dynamic>> balances,
+      ) {
+    final orderedBalances = _sortedBalances(balances);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 24,
+        vertical: 16,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary,
+            AppColors.primaryDark,
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.28),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Solde disponible',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _isBalanceHidden = !_isBalanceHidden;
+                  });
+                },
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    _isBalanceHidden
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: Colors.white.withValues(alpha: 0.85),
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          for (var i = 0; i < orderedBalances.length; i++) ...[
+            if (i > 0) ...[
+              const SizedBox(height: 8),
+              Divider(
+                color: Colors.white.withValues(alpha: 0.18),
+                height: 1,
+              ),
+              const SizedBox(height: 8),
+            ],
+            _buildBalanceRow(context, orderedBalances[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Trie les soldes pour un affichage stable et prévisible : USD en
+  /// premier, puis CDF (voir `CurrencyFormatter.selectableCurrencies`),
+  /// puis toute autre devise éventuelle dans son ordre d'origine.
+  List<Map<String, dynamic>> _sortedBalances(
+      List<Map<String, dynamic>> balances,
+      ) {
+    final order = <String, int>{
+      for (var i = 0;
+      i < CurrencyFormatter.selectableCurrencies.length;
+      i++)
+        CurrencyFormatter.selectableCurrencies[i].key: i,
+    };
+
+    final sorted = List<Map<String, dynamic>>.from(balances);
+
+    sorted.sort((a, b) {
+      final indexA = order[CurrencyFormatter.codeFromWallet(a)] ??
+          order.length;
+      final indexB = order[CurrencyFormatter.codeFromWallet(b)] ??
+          order.length;
+
+      return indexA.compareTo(indexB);
+    });
+
+    return sorted;
+  }
+
+  /// Une ligne de la carte de solde : le symbole du dollar ($) pour
+  /// l'USD, ou le code de la devise (ex. « CDF ») pour les autres,
+  /// suivi du montant. Pas de libellé redondant en dessous.
+  Widget _buildBalanceRow(
+      BuildContext context,
+      Map<String, dynamic> entry,
+      ) {
+    final balance = entry['balance'];
+    final currencyCode = CurrencyFormatter.codeFromWallet(entry);
+
+    final displaySymbol = currencyCode == 'USD'
+        ? CurrencyFormatter.symbolFor(currencyCode)
+        : currencyCode;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          displaySymbol,
+          style: Theme.of(context)
+              .textTheme
+              .titleLarge
+              ?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Flexible(
+          child: _buildBalanceAmountText(context, balance),
+        ),
+      ],
+    );
+  }
+
+  /// Affiche le montant du solde, flouté (au lieu de remplacé par
+  /// des points) quand l'utilisateur a choisi de le masquer. Le
+  /// texte réel reste dans l'arbre de widgets (juste flouté à
+  /// l'écran), ce qui garde la largeur cohérente avec le montant
+  /// réel plutôt qu'un nombre fixe de points.
+  Widget _buildBalanceAmountText(
+      BuildContext context,
+      dynamic balance,
+      ) {
+    final amountText = Text(
+      CurrencyFormatter.formatAmount(balance),
+      overflow: TextOverflow.ellipsis,
+      style: Theme.of(context)
+          .textTheme
+          .titleLarge
+          ?.copyWith(
+        color: Colors.white,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+
+    if (!_isBalanceHidden) {
+      return amountText;
+    }
+
+    return ImageFiltered(
+      imageFilter: ui.ImageFilter.blur(
+        sigmaX: 8,
+        sigmaY: 8,
+      ),
+      child: amountText,
     );
   }
 }
@@ -444,11 +680,15 @@ class _ActionCard extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    required this.iconColor,
+    required this.backgroundColor,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final Color iconColor;
+  final Color backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -456,7 +696,7 @@ class _ActionCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius:
-        BorderRadius.circular(12),
+        BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             vertical: 20,
@@ -464,12 +704,26 @@ class _ActionCard extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Icon(
-                icon,
-                size: 30,
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: backgroundColor,
+                ),
+                child: Icon(
+                  icon,
+                  color: iconColor,
+                  size: 24,
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(label),
+              const SizedBox(height: 10),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         ),
