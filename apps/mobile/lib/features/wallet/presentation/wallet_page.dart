@@ -622,6 +622,11 @@ class _WalletPageState extends State<WalletPage> {
 
         const SizedBox(height: 12),
 
+        // Grille resserrée à 3 colonnes (cartes plus compactes, voir
+        // `_ActionCard`) : l'historique a été déplacé à côté de l'icône
+        // "œil" sur la carte de solde (voir `_buildBalancesCard`), donc
+        // il n'apparaît plus ici. Profil, Notifications et Paramètres
+        // restent dans l'en-tête.
         Row(
           children: [
             Expanded(
@@ -634,7 +639,7 @@ class _WalletPageState extends State<WalletPage> {
               ),
             ),
 
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             Expanded(
               child: _ActionCard(
@@ -645,13 +650,9 @@ class _WalletPageState extends State<WalletPage> {
                 backgroundColor: AppColors.errorContainer,
               ),
             ),
-          ],
-        ),
 
-        const SizedBox(height: 12),
+            const SizedBox(width: 10),
 
-        Row(
-          children: [
             Expanded(
               child: _ActionCard(
                 icon: Icons.send_outlined,
@@ -661,27 +662,14 @@ class _WalletPageState extends State<WalletPage> {
                 backgroundColor: AppColors.primaryContainer,
               ),
             ),
-
-            const SizedBox(width: 12),
-
-            Expanded(
-              child: _ActionCard(
-                icon: Icons.history,
-                label: 'Historique',
-                onTap: _openTransactionHistory,
-                iconColor: AppColors.textSecondary,
-                backgroundColor: AppColors.surfaceVariant,
-              ),
-            ),
           ],
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
 
         // Actions pas encore développées (aperçu de mise en page
         // uniquement, phase de conception : pas de badge "Bientôt"
-        // pour l'instant, pour juger du rendu final). Profil,
-        // Notifications et Paramètres sont dans l'en-tête, pas ici.
+        // pour l'instant, pour juger du rendu final).
         Row(
           children: [
             Expanded(
@@ -694,7 +682,7 @@ class _WalletPageState extends State<WalletPage> {
               ),
             ),
 
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             Expanded(
               child: _ActionCard(
@@ -705,17 +693,13 @@ class _WalletPageState extends State<WalletPage> {
                 backgroundColor: AppColors.surfaceVariant,
               ),
             ),
-          ],
-        ),
 
-        const SizedBox(height: 12),
+            const SizedBox(width: 10),
 
-        Row(
-          children: [
             Expanded(
               child: _ActionCard(
                 icon: Icons.qr_code,
-                label: 'Recevoir (QR code)',
+                label: 'Recevoir',
                 onTap: () => _showComingSoon('Recevoir de l’argent par QR code'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
@@ -1098,23 +1082,40 @@ class _WalletPageState extends State<WalletPage> {
                 ),
               ),
 
-              InkWell(
-                onTap: () {
-                  setState(() {
-                    _isBalanceHidden = !_isBalanceHidden;
-                  });
-                },
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    _isBalanceHidden
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    color: Colors.white.withValues(alpha: 0.85),
-                    size: 20,
+              Row(
+                children: [
+                  InkWell(
+                    onTap: _openTransactionHistory,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.history,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        size: 20,
+                      ),
+                    ),
                   ),
-                ),
+
+                  InkWell(
+                    onTap: () {
+                      setState(() {
+                        _isBalanceHidden = !_isBalanceHidden;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(20),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        _isBalanceHidden
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1266,14 +1267,15 @@ class _ActionCard extends StatelessWidget {
         BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            vertical: 20,
-            horizontal: 12,
+            vertical: 12,
+            horizontal: 6,
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: backgroundColor,
@@ -1281,13 +1283,17 @@ class _ActionCard extends StatelessWidget {
                 child: Icon(
                   icon,
                   color: iconColor,
-                  size: 24,
+                  size: 18,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               Text(
                 label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
               ),
