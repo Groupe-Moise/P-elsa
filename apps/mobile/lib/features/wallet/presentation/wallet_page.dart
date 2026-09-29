@@ -451,9 +451,16 @@ class _WalletPageState extends State<WalletPage> {
   /// Total des sorties d'argent (retraits + transferts envoyés) du
   /// mois en cours, groupé par devise — aperçu indicatif affiché sur
   /// l'accueil (voir `_buildSpendingSummary`), pas un relevé complet.
+  /// Les deux devises supportées (USD, CDF) sont toujours incluses,
+  /// même à 0, pour que le résumé les affiche systématiquement toutes
+  /// les deux.
   Map<String, double> _monthlySpendingByCurrency() {
     final now = DateTime.now();
-    final totals = <String, double>{};
+
+    final totals = <String, double>{
+      for (final currency in CurrencyFormatter.selectableCurrencies)
+        currency.key: 0,
+    };
 
     for (final transaction in _transactions) {
       if (transaction['status'] != 'COMPLETED') {
@@ -488,9 +495,30 @@ class _WalletPageState extends State<WalletPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          tooltip: 'Profil',
+          tooltip: 'Profil (compte non vérifié)',
           onPressed: () => _showComingSoon('Profil'),
-          icon: const Icon(Icons.person_outline),
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.person_outline),
+              // Point rouge : indique que le compte n'est pas encore
+              // vérifié (aucune vérification d'identité n'est encore
+              // implémentée côté backend). À retirer une fois le
+              // statut réel branché sur le KYC.
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         title: const Text('Mon Wallet'),
         actions: [
@@ -599,10 +627,6 @@ class _WalletPageState extends State<WalletPage> {
           'Voici un aperçu de votre compte.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
-
-        const SizedBox(height: 20),
-
-        _buildIdentityBanner(context),
 
         const SizedBox(height: 20),
 
@@ -753,52 +777,6 @@ class _WalletPageState extends State<WalletPage> {
           content: Text('$label : bientôt disponible.'),
         ),
       );
-  }
-
-  /// Bandeau de statut du compte : aucune vérification d'identité
-  /// n'est encore implémentée côté backend, donc affiché en dur pour
-  /// l'instant (aperçu de mise en page). À remplacer par un vrai champ
-  /// une fois le KYC ajouté au wallet.
-  Widget _buildIdentityBanner(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: AppColors.warningContainer,
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.verified_user_outlined,
-            color: AppColors.warning,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Compte non vérifié',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Vérifiez votre identité pour augmenter vos limites.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: () => _showComingSoon('Vérification d’identité'),
-            child: const Text('Vérifier'),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Raccourci vers les destinataires récents/favoris, comme sur les
@@ -1495,7 +1473,7 @@ class _RecentTransactionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final amountColor = incoming ? AppColors.success : AppColors.textPrimary;
+    final amountColor = incoming ? AppColors.success : AppColors.error;
     final amountPrefix = incoming ? '+' : '-';
 
     return InkWell(
