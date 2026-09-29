@@ -499,8 +499,84 @@ class _WalletPageState extends State<WalletPage> {
             ),
           ],
         ),
+
+        const SizedBox(height: 12),
+
+        // Actions pas encore développées (aperçu de mise en page
+        // uniquement) : affichées comme les autres, mais estompées
+        // et marquées "Bientôt" — au clic, un simple message plutôt
+        // qu'une navigation, le temps de leur implémentation.
+        Row(
+          children: [
+            Expanded(
+              child: _ActionCard(
+                icon: Icons.person_outline,
+                label: 'Profil',
+                onTap: () => _showComingSoon('Profil'),
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
+                comingSoon: true,
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: _ActionCard(
+                icon: Icons.credit_card_outlined,
+                label: 'Paiement',
+                onTap: () => _showComingSoon('Paiement'),
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
+                comingSoon: true,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+
+        Row(
+          children: [
+            Expanded(
+              child: _ActionCard(
+                icon: Icons.notifications_outlined,
+                label: 'Notifications',
+                onTap: () => _showComingSoon('Notifications'),
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
+                comingSoon: true,
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            Expanded(
+              child: _ActionCard(
+                icon: Icons.settings_outlined,
+                label: 'Paramètres',
+                onTap: () => _showComingSoon('Paramètres'),
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
+                comingSoon: true,
+              ),
+            ),
+          ],
+        ),
       ],
     );
+  }
+
+  /// Message affiché au clic sur une action pas encore développée
+  /// (voir les `_ActionCard` avec `comingSoon: true` ci-dessus).
+  void _showComingSoon(String label) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('$label : bientôt disponible.'),
+        ),
+      );
   }
 
   /// Carte unique regroupant le solde de chaque devise du wallet, l'une
@@ -697,6 +773,7 @@ class _ActionCard extends StatelessWidget {
     required this.onTap,
     required this.iconColor,
     required this.backgroundColor,
+    this.comingSoon = false,
   });
 
   final IconData icon;
@@ -705,9 +782,14 @@ class _ActionCard extends StatelessWidget {
   final Color iconColor;
   final Color backgroundColor;
 
+  /// Vrai pour une action pas encore développée : affichée avec les
+  /// autres (pour visualiser la mise en page complète, y compris les
+  /// actions futures), mais estompée et marquée d'un badge "Bientôt".
+  final bool comingSoon;
+
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final card = Card(
       child: InkWell(
         onTap: onTap,
         borderRadius:
@@ -743,6 +825,41 @@ class _ActionCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    if (!comingSoon) {
+      return card;
+    }
+
+    return Stack(
+      children: [
+        Opacity(
+          opacity: 0.5,
+          child: card,
+        ),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 3,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.warningContainer,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Bientôt',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: AppColors.warning,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
