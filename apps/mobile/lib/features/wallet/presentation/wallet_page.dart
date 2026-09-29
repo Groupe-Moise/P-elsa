@@ -347,6 +347,11 @@ class _WalletPageState extends State<WalletPage> {
         ),
         title: const Text('Mon Wallet'),
         actions: [
+          IconButton(
+            tooltip: 'Notifications',
+            onPressed: () => _showComingSoon('Notifications'),
+            icon: const Icon(Icons.notifications_outlined),
+          ),
           PopupMenuButton<_SettingsAction>(
             tooltip: 'Paramètres',
             icon: const Icon(Icons.settings_outlined),
@@ -526,8 +531,9 @@ class _WalletPageState extends State<WalletPage> {
         // uniquement) : affichées comme les autres, mais estompées
         // et marquées "Bientôt" — au clic, un simple message plutôt
         // qu'une navigation, le temps de leur implémentation.
-        // Profil et Paramètres sont désormais dans l'en-tête (icônes
-        // de part et d'autre du titre "Mon Wallet"), pas ici.
+        // Profil, Notifications et Paramètres sont désormais dans
+        // l'en-tête (icônes de part et d'autre du titre "Mon
+        // Wallet"), pas ici.
         Row(
           children: [
             Expanded(
@@ -545,9 +551,26 @@ class _WalletPageState extends State<WalletPage> {
 
             Expanded(
               child: _ActionCard(
-                icon: Icons.notifications_outlined,
-                label: 'Notifications',
-                onTap: () => _showComingSoon('Notifications'),
+                icon: Icons.currency_exchange,
+                label: 'Bureau de change',
+                onTap: () => _showComingSoon('Bureau de change'),
+                iconColor: AppColors.textSecondary,
+                backgroundColor: AppColors.surfaceVariant,
+                comingSoon: true,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 12),
+
+        Row(
+          children: [
+            Expanded(
+              child: _ActionCard(
+                icon: Icons.qr_code,
+                label: 'Recevoir (QR code)',
+                onTap: () => _showComingSoon('Recevoir de l’argent par QR code'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
                 comingSoon: true,
