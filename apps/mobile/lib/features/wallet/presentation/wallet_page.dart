@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -39,10 +40,24 @@ class _WalletPageState extends State<WalletPage> {
   Map<String, dynamic>? _wallet;
   Map<String, dynamic>? _user;
 
+  /// Transactions de l'utilisateur (dépôts, retraits, transferts),
+  /// utilisées pour l'aperçu "Transactions récentes" et le résumé des
+  /// dépenses du mois sur cet écran. La liste complète et détaillée
+  /// reste sur `TransactionHistoryPage`.
+  List<Map<String, dynamic>> _transactions = [];
+
+  final PageController _promoPageController = PageController();
+
   @override
   void initState() {
     super.initState();
     _loadWallet();
+  }
+
+  @override
+  void dispose() {
+    _promoPageController.dispose();
+    super.dispose();
   }
 
   /// Recharge le wallet. Si `preferredCurrencyCode` est fourni (ex.
@@ -87,6 +102,11 @@ class _WalletPageState extends State<WalletPage> {
       });
 
       _selectBalanceForCurrency(preferredCurrencyCode);
+
+      // Chargée séparément : une panne ici ne doit pas empêcher
+      // d'afficher le wallet (l'aperçu "Transactions récentes" et le
+      // résumé des dépenses disparaissent simplement si elle échoue).
+      unawaited(_loadRecentTransactions(token));
     } on ApiException catch (error) {
       if (!mounted) {
         return;
@@ -105,6 +125,39 @@ class _WalletPageState extends State<WalletPage> {
         _errorMessage =
         'Impossible de charger votre wallet.';
         _isLoading = false;
+      });
+    }
+  }
+
+  /// Alimente l'aperçu "Transactions récentes" et le résumé des
+  /// dépenses du mois (voir `_buildRecentTransactionsPreview` et
+  /// `_buildSpendingSummary`). Silencieuse en cas d'échec : ces deux
+  /// blocs disparaissent simplement plutôt que de bloquer l'écran.
+  Future<void> _loadRecentTransactions(String token) async {
+    try {
+      final response = await _apiClient.get(
+        '/transactions/me',
+        token: token,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final transactions = response['data'];
+
+      setState(() {
+        _transactions = transactions is List
+            ? transactions.whereType<Map<String, dynamic>>().toList()
+            : [];
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _transactions = [];
       });
     }
   }
@@ -336,6 +389,100 @@ class _WalletPageState extends State<WalletPage> {
     });
   }
 
+  /// Libellé court d'un type de transaction pour l'aperçu de l'accueil
+  /// (version compacte de la logique équivalente dans
+  /// `TransactionHistoryPage`, qui reste la référence pour le détail).
+  String _transactionTypeLabel(Map<String, dynamic> transaction) {
+    switch (transaction['type']) {
+      case 'DEPOSIT':
+        return 'Dépôt';
+      case 'WITHDRAWAL':
+        return 'Retrait';
+      case 'TRANSFER':
+        return _isIncomingTransaction(transaction)
+            ? 'Transfert reçu'
+            : 'Transfert envoyé';
+      default:
+        return 'Transaction';
+    }
+  }
+
+  IconData _transactionIcon(Map<String, dynamic> transaction) {
+    switch (transaction['type']) {
+      case 'DEPOSIT':
+        return Icons.arrow_downward;
+      case 'WITHDRAWAL':
+        return Icons.arrow_upward;
+      case 'TRANSFER':
+        return Icons.swap_horiz;
+      default:
+        return Icons.receipt_long_outlined;
+    }
+  }
+
+  bool _isIncomingTransaction(Map<String, dynamic> transaction) {
+    final type = transaction['type'];
+
+    if (type == 'DEPOSIT') {
+      return true;
+    }
+
+    if (type == 'WITHDRAWAL') {
+      return false;
+    }
+
+    if (type == 'TRANSFER') {
+      return transaction['receiverUserId'] == _user?['id'];
+    }
+
+    return false;
+  }
+
+  String _transactionCurrencyCode(Map<String, dynamic> transaction) {
+    final wallet = transaction['type'] == 'DEPOSIT'
+        ? transaction['receiverWallet']
+        : transaction['senderWallet'];
+
+    return CurrencyFormatter.codeFromWallet(
+      wallet is Map<String, dynamic> ? wallet : null,
+    );
+  }
+
+  /// Total des sorties d'argent (retraits + transferts envoyés) du
+  /// mois en cours, groupé par devise — aperçu indicatif affiché sur
+  /// l'accueil (voir `_buildSpendingSummary`), pas un relevé complet.
+  Map<String, double> _monthlySpendingByCurrency() {
+    final now = DateTime.now();
+    final totals = <String, double>{};
+
+    for (final transaction in _transactions) {
+      if (transaction['status'] != 'COMPLETED') {
+        continue;
+      }
+
+      if (_isIncomingTransaction(transaction)) {
+        continue;
+      }
+
+      final createdAt = DateTime.tryParse(
+        transaction['createdAt']?.toString() ?? '',
+      );
+
+      if (createdAt == null ||
+          createdAt.year != now.year ||
+          createdAt.month != now.month) {
+        continue;
+      }
+
+      final currencyCode = _transactionCurrencyCode(transaction);
+      final amount = CurrencyFormatter.parseAmount(transaction['amount']);
+
+      totals[currencyCode] = (totals[currencyCode] ?? 0) + amount;
+    }
+
+    return totals;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -453,7 +600,11 @@ class _WalletPageState extends State<WalletPage> {
           style: Theme.of(context).textTheme.bodyMedium,
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
+
+        _buildIdentityBanner(context),
+
+        const SizedBox(height: 20),
 
         _buildBalancesCard(context, balances),
 
@@ -528,12 +679,9 @@ class _WalletPageState extends State<WalletPage> {
         const SizedBox(height: 12),
 
         // Actions pas encore développées (aperçu de mise en page
-        // uniquement) : affichées comme les autres, mais estompées
-        // et marquées "Bientôt" — au clic, un simple message plutôt
-        // qu'une navigation, le temps de leur implémentation.
-        // Profil, Notifications et Paramètres sont désormais dans
-        // l'en-tête (icônes de part et d'autre du titre "Mon
-        // Wallet"), pas ici.
+        // uniquement, phase de conception : pas de badge "Bientôt"
+        // pour l'instant, pour juger du rendu final). Profil,
+        // Notifications et Paramètres sont dans l'en-tête, pas ici.
         Row(
           children: [
             Expanded(
@@ -543,7 +691,6 @@ class _WalletPageState extends State<WalletPage> {
                 onTap: () => _showComingSoon('Paiement'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
-                comingSoon: true,
               ),
             ),
 
@@ -556,7 +703,6 @@ class _WalletPageState extends State<WalletPage> {
                 onTap: () => _showComingSoon('Bureau de change'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
-                comingSoon: true,
               ),
             ),
           ],
@@ -573,17 +719,48 @@ class _WalletPageState extends State<WalletPage> {
                 onTap: () => _showComingSoon('Recevoir de l’argent par QR code'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
-                comingSoon: true,
               ),
             ),
           ],
         ),
+
+        const SizedBox(height: 28),
+
+        _buildSectionTitle(context, 'Envoyer à...'),
+
+        const SizedBox(height: 12),
+
+        _buildQuickSendRow(context),
+
+        const SizedBox(height: 28),
+
+        _buildPromoCarousel(context),
+
+        const SizedBox(height: 20),
+
+        _buildExchangeRateCard(context),
+
+        const SizedBox(height: 28),
+
+        _buildSpendingSummary(context),
+
+        const SizedBox(height: 28),
+
+        _buildRecentTransactionsSection(context),
       ],
     );
   }
 
-  /// Message affiché au clic sur une action pas encore développée
-  /// (voir les `_ActionCard` avec `comingSoon: true` ci-dessus).
+  Widget _buildSectionTitle(BuildContext context, String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+        color: AppColors.textPrimary,
+      ),
+    );
+  }
+
+  /// Message affiché au clic sur une action pas encore développée.
   void _showComingSoon(String label) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -592,6 +769,284 @@ class _WalletPageState extends State<WalletPage> {
           content: Text('$label : bientôt disponible.'),
         ),
       );
+  }
+
+  /// Bandeau de statut du compte : aucune vérification d'identité
+  /// n'est encore implémentée côté backend, donc affiché en dur pour
+  /// l'instant (aperçu de mise en page). À remplacer par un vrai champ
+  /// une fois le KYC ajouté au wallet.
+  Widget _buildIdentityBanner(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: AppColors.warningContainer,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.verified_user_outlined,
+            color: AppColors.warning,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Compte non vérifié',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Vérifiez votre identité pour augmenter vos limites.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () => _showComingSoon('Vérification d’identité'),
+            child: const Text('Vérifier'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Raccourci vers les destinataires récents/favoris, comme sur les
+  /// wallets grand public : un tap envoie directement vers le
+  /// transfert. Aucun favori réel n'est encore mémorisé côté backend,
+  /// donc les avatars sont génériques pour l'instant (aperçu de mise
+  /// en page).
+  Widget _buildQuickSendRow(BuildContext context) {
+    return SizedBox(
+      height: 84,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _QuickSendAvatar(
+            icon: Icons.add,
+            label: 'Nouveau',
+            isAddButton: true,
+            onTap: _openTransfer,
+          ),
+          for (var i = 0; i < 4; i++)
+            _QuickSendAvatar(
+              icon: Icons.person_outline,
+              label: 'Contact',
+              onTap: _openTransfer,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Carrousel d'annonces (nouveautés, futures fonctionnalités) : trois
+  /// cartes statiques pour visualiser l'emplacement, à connecter plus
+  /// tard à un vrai contenu (annonces gérées côté back-office, par
+  /// exemple).
+  Widget _buildPromoCarousel(BuildContext context) {
+    final slides = [
+      _PromoSlideData(
+        icon: Icons.celebration_outlined,
+        title: 'Bienvenue sur P-Elsa',
+        message:
+        'Gérez vos dépôts, retraits et transferts en toute simplicité.',
+        color: AppColors.primary,
+        backgroundColor: AppColors.primaryContainer,
+      ),
+      _PromoSlideData(
+        icon: Icons.currency_exchange,
+        title: 'Bureau de change',
+        message: 'Bientôt : échangez USD et CDF directement dans l’app.',
+        color: AppColors.success,
+        backgroundColor: AppColors.successContainer,
+      ),
+      _PromoSlideData(
+        icon: Icons.card_giftcard_outlined,
+        title: 'Parrainez vos proches',
+        message: 'Bientôt : invitez vos proches et gagnez des récompenses.',
+        color: AppColors.warning,
+        backgroundColor: AppColors.warningContainer,
+      ),
+    ];
+
+    return SizedBox(
+      height: 120,
+      child: PageView.builder(
+        controller: _promoPageController,
+        itemCount: slides.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: _PromoSlide(data: slides[index]),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Taux de change indicatif USD/CDF. Valeur fixe pour l'instant
+  /// (aperçu de mise en page) : à brancher sur un vrai taux une fois
+  /// le bureau de change développé côté backend.
+  Widget _buildExchangeRateCard(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: AppColors.surfaceVariant,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showComingSoon('Bureau de change'),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(
+                Icons.currency_exchange,
+                color: AppColors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '1 \$ ≈ 2 800 CDF',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Taux indicatif du jour',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                color: AppColors.textSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Résumé des sorties d'argent du mois en cours (voir
+  /// `_monthlySpendingByCurrency`) : un aperçu indicatif, pas un
+  /// relevé comptable complet. N'affiche rien tant qu'aucune
+  /// transaction du mois n'est disponible.
+  Widget _buildSpendingSummary(BuildContext context) {
+    final totals = _monthlySpendingByCurrency();
+
+    if (totals.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final monthLabel = _capitalize(
+      _monthName(DateTime.now().month),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(context, 'Dépenses de $monthLabel'),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                for (final entry in totals.entries) ...[
+                  if (entry.key != totals.entries.first.key)
+                    const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        entry.key,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      Text(
+                        '${CurrencyFormatter.compactLabel(entry.key)} '
+                            '${CurrencyFormatter.formatAmount(entry.value)}',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _monthName(int month) {
+    const names = [
+      'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+      'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
+    ];
+
+    return names[(month - 1).clamp(0, 11)];
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) {
+      return value;
+    }
+
+    return value[0].toUpperCase() + value.substring(1);
+  }
+
+  /// Aperçu des trois dernières transactions, avec un lien vers
+  /// l'historique complet (`TransactionHistoryPage`). N'affiche rien
+  /// tant qu'aucune transaction n'a encore été chargée.
+  Widget _buildRecentTransactionsSection(BuildContext context) {
+    if (_transactions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final preview = _transactions.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _buildSectionTitle(context, 'Transactions récentes'),
+            TextButton(
+              onPressed: _openTransactionHistory,
+              child: const Text('Voir tout'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        for (final transaction in preview)
+          _RecentTransactionTile(
+            typeLabel: _transactionTypeLabel(transaction),
+            icon: _transactionIcon(transaction),
+            incoming: _isIncomingTransaction(transaction),
+            currencySymbol: CurrencyFormatter.compactLabel(
+              _transactionCurrencyCode(transaction),
+            ),
+            amount: CurrencyFormatter.formatAmount(transaction['amount']),
+            onTap: _openTransactionHistory,
+          ),
+      ],
+    );
   }
 
   /// Carte unique regroupant le solde de chaque devise du wallet, l'une
@@ -875,6 +1330,207 @@ class _ActionCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Un avatar de la rangée "Envoyer à..." (voir `_buildQuickSendRow`) :
+/// soit le bouton "Nouveau" (icône +) pour démarrer un transfert vers
+/// un nouveau destinataire, soit un contact récent/favori (aperçu de
+/// mise en page pour l'instant, aucun favori réel n'est encore
+/// mémorisé côté backend).
+class _QuickSendAvatar extends StatelessWidget {
+  const _QuickSendAvatar({
+    required this.icon,
+    required this.label,
+    this.isAddButton = false,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool isAddButton;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          width: 64,
+          child: Column(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isAddButton
+                      ? AppColors.primaryContainer
+                      : AppColors.surfaceVariant,
+                ),
+                child: Icon(
+                  icon,
+                  color: isAddButton
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Contenu d'une carte du carrousel d'annonces (voir
+/// `_buildPromoCarousel`) : une simple structure de données, séparée du
+/// widget qui l'affiche (`_PromoSlide`).
+class _PromoSlideData {
+  const _PromoSlideData({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.color,
+    required this.backgroundColor,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Color color;
+  final Color backgroundColor;
+}
+
+/// Affiche une carte du carrousel d'annonces à partir de son contenu
+/// (`_PromoSlideData`).
+class _PromoSlide extends StatelessWidget {
+  const _PromoSlide({
+    required this.data,
+  });
+
+  final _PromoSlideData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: data.backgroundColor,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(
+              data.icon,
+              color: data.color,
+              size: 32,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    data.title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: data.color,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    data.message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Une ligne de l'aperçu "Transactions récentes" (voir
+/// `_buildRecentTransactionsSection`) : version compacte de la ligne
+/// équivalente dans `TransactionHistoryPage`, qui reste la référence
+/// pour le détail complet d'une transaction.
+class _RecentTransactionTile extends StatelessWidget {
+  const _RecentTransactionTile({
+    required this.typeLabel,
+    required this.icon,
+    required this.incoming,
+    required this.currencySymbol,
+    required this.amount,
+    required this.onTap,
+  });
+
+  final String typeLabel;
+  final IconData icon;
+  final bool incoming;
+  final String currencySymbol;
+  final String amount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final amountColor = incoming ? AppColors.success : AppColors.textPrimary;
+    final amountPrefix = incoming ? '+' : '-';
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: incoming
+                    ? AppColors.successContainer
+                    : AppColors.surfaceVariant,
+              ),
+              child: Icon(
+                icon,
+                size: 20,
+                color: incoming ? AppColors.success : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                typeLabel,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Text(
+              '$amountPrefix$currencySymbol $amount',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: amountColor,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
