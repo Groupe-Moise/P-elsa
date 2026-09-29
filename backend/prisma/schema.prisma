@@ -33,6 +33,10 @@ enum TransactionType {
   TRANSFER
   DEPOSIT
   WITHDRAWAL
+
+  /// Conversion d'un solde d'une devise vers une autre, à
+  /// l'intérieur du même wallet (voir le module `exchange`).
+  EXCHANGE
 }
 
 enum LedgerAccountKind {
@@ -49,6 +53,14 @@ enum LedgerAccountKind {
   /// lors d'un dépôt, à verser lors d'un retrait. Sert de
   /// contrepartie pour équilibrer chaque écriture.
   PLATFORM_FLOAT
+
+  /// Réserve de change P-ELSA : contrepartie des conversions
+  /// entre devises (bureau de change). Un compte par devise,
+  /// débité quand un utilisateur reçoit cette devise en échange
+  /// d'une autre, crédité quand il la donne. Distinct de
+  /// PLATFORM_FLOAT, qui concerne uniquement les opérateurs
+  /// Mobile Money.
+  PLATFORM_EXCHANGE
 }
 
 enum IdempotencyStatus {
@@ -144,6 +156,17 @@ model Currency {
   ledgerEntries  LedgerEntry[]
   transactions   Transaction[]
 
+  /// Transactions d'EXCHANGE où cette devise est la devise CIBLE
+  /// (voir Transaction.toCurrencyId) ; `transactions` ci-dessus
+  /// couvre déjà la devise source via `currencyId`.
+  transactionsAsToCurrency Transaction[] @relation("TransactionToCurrency")
+
+  /// Taux de change où cette devise est la devise de DÉPART.
+  exchangeRatesFrom ExchangeRate[] @relation("ExchangeRateFrom")
+
+  /// Taux de change où cette devise est la devise D'ARRIVÉE.
+  exchangeRatesTo   ExchangeRate[] @relation("ExchangeRateTo")
+
   @@map("currencies")
 }
 
@@ -206,9 +229,21 @@ model Transaction {
 
   description      String?
 
-  /// Devise de l'opération. Vide uniquement pour les transactions
-  /// créées avant l'ajout du multi-devises (USD à l'époque).
+  /// Devise de l'opération. Pour un EXCHANGE, c'est la devise
+  /// SOURCE (celle débitée) ; voir `toCurrencyId` pour la devise
+  /// cible. Vide uniquement pour les transactions créées avant
+  /// l'ajout du multi-devises (USD à l'époque).
   currencyId        String?
+
+  /// Devise CIBLE d'un EXCHANGE uniquement (celle créditée sur le
+  /// wallet) ; toujours vide pour les autres types de transaction.
+  toCurrencyId      String?
+
+  /// Taux utilisé pour un EXCHANGE (montant en devise cible pour 1
+  /// unité de devise source), figé au moment de l'opération même
+  /// si le taux courant change ensuite ; toujours vide pour les
+  /// autres types de transaction.
+  rate              Decimal? @db.Decimal(20, 8)
 
   /// Fournisseur de paiement qui exécute l'opération (ex. sandbox,
   /// maishapay) et référence de l'opération chez ce fournisseur.
@@ -234,6 +269,7 @@ model Transaction {
   receiverWallet Wallet? @relation("ReceiverWalletTransactions", fields: [receiverWalletId], references: [id])
 
   currency       Currency? @relation(fields: [currencyId], references: [id])
+  toCurrency     Currency? @relation("TransactionToCurrency", fields: [toCurrencyId], references: [id])
 
   ledgerEntries  LedgerEntry[]
 
@@ -340,4 +376,35 @@ model LedgerEntry {
   @@index([accountId])
   @@index([transactionId])
   @@map("ledger_entries")
+}
+
+/// =========================================================
+/// TAUX DE CHANGE (BUREAU DE CHANGE)
+/// =========================================================
+///
+/// Un taux par sens de conversion (ex. USD -> CDF), géré par un
+/// admin pour l'instant (aucun panneau admin dédié pour le moment :
+/// mis à jour directement en base, ou via un futur endpoint
+/// /admin/exchange-rates). `rate` = combien d'unités de
+/// `toCurrency` pour 1 unité de `fromCurrency`.
+///
+/// Le sens inverse (CDF -> USD) est une ligne séparée, pas
+/// calculée comme 1 / rate, pour permettre plus tard une marge
+/// différente selon le sens si nécessaire — même si les deux sens
+/// utilisent la même valeur en pratique tant qu'aucun frais n'est
+/// appliqué (voir ExchangeService).
+model ExchangeRate {
+  id             String   @id @default(uuid())
+  fromCurrencyId String
+  toCurrencyId   String
+  rate           Decimal  @db.Decimal(20, 8)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  fromCurrency   Currency @relation("ExchangeRateFrom", fields: [fromCurrencyId], references: [id])
+  toCurrency     Currency @relation("ExchangeRateTo", fields: [toCurrencyId], references: [id])
+
+  @@unique([fromCurrencyId, toCurrencyId])
+  @@map("exchange_rates")
 }

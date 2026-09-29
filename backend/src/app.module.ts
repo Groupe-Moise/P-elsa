@@ -11,6 +11,7 @@ import {TransactionsModule } from './transactions/transactions.module'
 import { UsersModule } from './users/users.module';
 import { WalletModule } from './wallet/wallet.module';
 import { AdminModule } from './admin/admin.module';
+import { ExchangeModule } from './exchange/exchange.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AdminModule } from './admin/admin.module';
     WalletModule,
     TransactionsModule,
     AdminModule,
+    ExchangeModule,
 
   ],
   controllers: [AppController],

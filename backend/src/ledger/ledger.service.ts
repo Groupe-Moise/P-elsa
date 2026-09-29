@@ -40,6 +40,15 @@ interface RecordTransferInput {
   amount: Prisma.Decimal | number | string;
 }
 
+interface RecordExchangeInput {
+  transactionId: string;
+  walletId: string;
+  fromCurrencyId: string;
+  toCurrencyId: string;
+  fromAmount: Prisma.Decimal | number | string;
+  toAmount: Prisma.Decimal | number | string;
+}
+
 export interface WalletReconciliation {
   walletId: string;
   walletBalance: string;
@@ -239,6 +248,76 @@ export class LedgerService {
   }
 
   /**
+   * Bureau de change : conversion d'un solde d'une devise vers une
+   * autre, à l'intérieur du MÊME wallet. Contrairement à un
+   * transfert (même devise, deux wallets), il s'agit ici de deux
+   * devises différentes sur un seul wallet : `postBalancedEntries`
+   * n'équilibre les écritures que par devise, donc chaque devise a
+   * son propre jeu d'écritures, équilibré via le compte de réserve
+   * de change de P-ELSA (PLATFORM_EXCHANGE) plutôt que directement
+   * entre les deux comptes du wallet :
+   *
+   * - devise source : le wallet est débité, la réserve de change
+   *   (dans cette même devise) est créditée du montant reçu.
+   * - devise cible : la réserve de change (dans l'autre devise) est
+   *   débitée, le wallet est crédité du montant converti.
+   */
+  async recordExchange(
+    tx: PrismaTx,
+    input: RecordExchangeInput,
+  ): Promise<void> {
+    const walletFromAccountId = await this.getOrCreateWalletAccount(
+      tx,
+      input.walletId,
+      input.fromCurrencyId,
+    );
+
+    const walletToAccountId = await this.getOrCreateWalletAccount(
+      tx,
+      input.walletId,
+      input.toCurrencyId,
+    );
+
+    const exchangeFromAccountId = await this.getOrCreatePlatformAccount(
+      tx,
+      LedgerAccountKind.PLATFORM_EXCHANGE,
+      input.fromCurrencyId,
+    );
+
+    const exchangeToAccountId = await this.getOrCreatePlatformAccount(
+      tx,
+      LedgerAccountKind.PLATFORM_EXCHANGE,
+      input.toCurrencyId,
+    );
+
+    await this.postBalancedEntries(tx, input.transactionId, input.fromCurrencyId, [
+      {
+        accountId: walletFromAccountId,
+        amount: this.negate(input.fromAmount),
+        description: 'Change : débit du wallet (devise source)',
+      },
+      {
+        accountId: exchangeFromAccountId,
+        amount: input.fromAmount,
+        description: 'Change : devise source reçue (réserve de change P-ELSA)',
+      },
+    ]);
+
+    await this.postBalancedEntries(tx, input.transactionId, input.toCurrencyId, [
+      {
+        accountId: exchangeToAccountId,
+        amount: this.negate(input.toAmount),
+        description: 'Change : devise cible versée (réserve de change P-ELSA)',
+      },
+      {
+        accountId: walletToAccountId,
+        amount: input.toAmount,
+        description: 'Change : crédit du wallet (devise cible)',
+      },
+    ]);
+  }
+
+  /**
    * Vérifie que le solde du wallet égale la somme de ses
    * écritures. Ne modifie rien ; sert à l'auto-contrôle
    * (endpoint GET /ledger/me, outils d'administration futurs).
@@ -327,7 +406,8 @@ export class LedgerService {
     tx: PrismaTx,
     kind:
       | typeof LedgerAccountKind.PLATFORM_COMMISSION
-      | typeof LedgerAccountKind.PLATFORM_FLOAT,
+      | typeof LedgerAccountKind.PLATFORM_FLOAT
+      | typeof LedgerAccountKind.PLATFORM_EXCHANGE,
     currencyId: string,
   ): Promise<string> {
     const cacheKey = `${kind}:${currencyId}`;

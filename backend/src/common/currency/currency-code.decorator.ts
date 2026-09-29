@@ -24,3 +24,18 @@ export function CurrencyCodeField() {
     }),
   );
 }
+
+/**
+ * Champ "devise" OBLIGATOIRE, sans valeur par défaut. Contrairement
+ * à `CurrencyCodeField` (dépôt, retrait, transfert), il n'existe pas
+ * de devise implicite raisonnable pour une conversion de change :
+ * l'application doit toujours préciser explicitement les deux
+ * devises concernées (voir CreateExchangeBody).
+ */
+export function RequiredCurrencyCodeField() {
+  return applyDecorators(
+    IsIn(SUPPORTED_CURRENCY_CODES, {
+      message: `Devise invalide. Devises acceptées : ${SUPPORTED_CURRENCY_CODES.join(', ')}.`,
+    }),
+  );
+}
