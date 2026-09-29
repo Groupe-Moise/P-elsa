@@ -1337,6 +1337,16 @@ export class TransactionsService {
         senderWallet: true,
 
         receiverWallet: true,
+
+        /**
+         * Devise de l'OPÉRATION (voir le commentaire sur
+         * `currencyId` plus haut). Un wallet peut détenir plusieurs
+         * devises (voir WalletBalance) : il n'a donc pas de champ
+         * `currency` propre, et le code de devise ne peut être lu
+         * que depuis cette relation, pas depuis `senderWallet` /
+         * `receiverWallet`.
+         */
+        currency: true,
       },
 
       orderBy: {

@@ -53,6 +53,34 @@ class CurrencyFormatter {
     return 'USD';
   }
 
+  /// Extrait le code de devise (ex. 'CDF') d'une transaction telle que
+  /// renvoyée par `/transactions/me` (voir `findByUserId` côté
+  /// backend, qui inclut la relation `currency` de la transaction).
+  ///
+  /// Un wallet peut détenir plusieurs devises à la fois (voir
+  /// WalletBalance) : contrairement à `codeFromWallet`, il ne faut
+  /// donc PAS lire la devise depuis `senderWallet`/`receiverWallet`
+  /// (qui n'ont pas de champ `currency` propre) mais depuis la
+  /// relation `currency` de la transaction elle-même, qui est celle
+  /// réellement utilisée pour cette opération précise.
+  ///
+  /// Ne retombe sur 'USD' que pour les rares transactions créées
+  /// avant l'ajout du multi-devises (`currencyId` alors vide, voir
+  /// le commentaire sur ce champ côté schéma Prisma).
+  static String codeFromTransaction(Map<String, dynamic>? transaction) {
+    final currency = transaction?['currency'];
+
+    if (currency is Map<String, dynamic>) {
+      final code = currency['code'];
+
+      if (code is String && code.isNotEmpty) {
+        return code;
+      }
+    }
+
+    return 'USD';
+  }
+
   /// Extrait le nom complet de la devise (ex. 'Dollar américain')
   /// d'un wallet. Retombe sur le code si le nom est absent.
   static String nameFromWallet(Map<String, dynamic>? wallet) {

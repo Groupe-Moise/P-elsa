@@ -207,27 +207,7 @@ class _TransactionHistoryPageState
   String _currencyCode(
       Map<String, dynamic> transaction,
       ) {
-    Map<String, dynamic>? wallet;
-
-    if (transaction['type'] == 'DEPOSIT') {
-      final receiverWallet =
-      transaction['receiverWallet'];
-
-      if (receiverWallet
-      is Map<String, dynamic>) {
-        wallet = receiverWallet;
-      }
-    } else {
-      final senderWallet =
-      transaction['senderWallet'];
-
-      if (senderWallet
-      is Map<String, dynamic>) {
-        wallet = senderWallet;
-      }
-    }
-
-    return CurrencyFormatter.codeFromWallet(wallet);
+    return CurrencyFormatter.codeFromTransaction(transaction);
   }
 
   String _currencySymbol(

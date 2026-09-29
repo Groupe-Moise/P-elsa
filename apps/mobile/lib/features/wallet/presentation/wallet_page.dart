@@ -439,13 +439,7 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   String _transactionCurrencyCode(Map<String, dynamic> transaction) {
-    final wallet = transaction['type'] == 'DEPOSIT'
-        ? transaction['receiverWallet']
-        : transaction['senderWallet'];
-
-    return CurrencyFormatter.codeFromWallet(
-      wallet is Map<String, dynamic> ? wallet : null,
-    );
+    return CurrencyFormatter.codeFromTransaction(transaction);
   }
 
   /// Total des sorties d'argent (retraits + transferts envoyés) du
@@ -638,13 +632,6 @@ class _WalletPageState extends State<WalletPage> {
               ?.copyWith(
             fontWeight: FontWeight.w600,
           ),
-        ),
-
-        const SizedBox(height: 4),
-
-        Text(
-          'Voici un aperçu de votre compte.',
-          style: Theme.of(context).textTheme.bodyMedium,
         ),
 
         const SizedBox(height: 20),
