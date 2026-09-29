@@ -18,8 +18,10 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { assertOwnerOrAdmin } from '../auth/utils/assert-owner-or-admin';
 
 import { CreateDepositBody } from './dto/create-deposit.body';
+import { CreatePaymentBody } from './dto/create-payment.body';
 import { CreateTransferBody } from './dto/create-transfer.body';
 import { CreateWithdrawalBody } from './dto/create-withdrawal.body';
+import { FindMerchantQuery } from './dto/find-merchant.query';
 import { FindRecipientQuery } from './dto/find-recipient.query';
 
 import { TransactionsService } from './transactions.service';
@@ -122,6 +124,58 @@ export class TransactionsController {
     @Body() body: CreateTransferBody,
   ) {
     return this.transactionsService.createTransfer(
+      request.user.id,
+      body,
+    );
+  }
+
+  /**
+   * =========================================================
+   * RECHERCHE DU MARCHAND D'UN PAIEMENT
+   * =========================================================
+   *
+   * Exemple :
+   *
+   * GET /transactions/payment/recipient?merchantCode=PE-XXXXXXXX
+   *
+   * Le code est recherché uniquement parmi les comptes VENDOR (voir
+   * TransactionsService.findPaymentRecipient).
+   *
+   * Limité comme la recherche par téléphone, pour empêcher de
+   * deviner quels codes marchands sont inscrits.
+   */
+  @Throttle({
+    default: {
+      limit: 30,
+      ttl: 60000,
+    },
+  })
+  @Get('payment/recipient')
+  findPaymentRecipient(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: FindMerchantQuery,
+  ) {
+    return this.transactionsService.findPaymentRecipient(
+      request.user.id,
+      query.merchantCode,
+    );
+  }
+
+  /**
+   * =========================================================
+   * PAIEMENT D'UN CLIENT VERS UN MARCHAND
+   * =========================================================
+   *
+   * Le payeur est automatiquement récupéré depuis l'utilisateur
+   * authentifié par le JWT. Le merchantCode du bénéficiaire provient
+   * du body (voir CreatePaymentBody).
+   */
+  @Post('payment')
+  createPayment(
+    @Req() request: AuthenticatedRequest,
+    @Body() body: CreatePaymentBody,
+  ) {
+    return this.transactionsService.createPayment(
       request.user.id,
       body,
     );

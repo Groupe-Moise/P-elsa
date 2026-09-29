@@ -1,10 +1,12 @@
 
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 
+import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { withPrimaryBalance } from '../wallet/wallet.mapper';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
@@ -16,6 +18,12 @@ export interface CreateUserDto {
   lastName: string;
   role?: UserRole;
 }
+
+// Alphabet volontairement privé des caractères ambigus (0/O, 1/I/l, ...)
+// pour qu'un code marchand reste facile à relire et à retaper à la main.
+const MERCHANT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const MERCHANT_CODE_LENGTH = 8;
+const MERCHANT_CODE_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class UsersService {
@@ -93,6 +101,7 @@ export class UsersService {
           lastName: true,
           role: true,
           status: true,
+          merchantCode: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -142,6 +151,7 @@ export class UsersService {
         lastName: true,
         role: true,
         status: true,
+        merchantCode: true,
         createdAt: true,
         updatedAt: true,
 
@@ -181,6 +191,7 @@ export class UsersService {
         lastName: true,
         role: true,
         status: true,
+        merchantCode: true,
         createdAt: true,
         updatedAt: true,
 
@@ -220,6 +231,7 @@ export class UsersService {
         lastName: true,
         role: true,
         status: true,
+        merchantCode: true,
         createdAt: true,
         updatedAt: true,
 
@@ -259,6 +271,7 @@ export class UsersService {
         lastName: true,
         role: true,
         status: true,
+        merchantCode: true,
         createdAt: true,
         updatedAt: true,
 
@@ -282,5 +295,89 @@ export class UsersService {
       ...user,
       wallet: user.wallet ? withPrimaryBalance(user.wallet) : null,
     };
+  }
+
+  /**
+   * Génère (ou régénère) le code marchand d'un compte VENDOR, utilisé
+   * pour recevoir un paiement (voir TransactionsService.createPayment)
+   * à la place d'un numéro de téléphone. Le marchand le déclenche
+   * lui-même depuis l'app ; il n'y a pas d'attribution par un admin.
+   *
+   * Rappeler cette méthode remplace le code existant : l'ancien QR
+   * affiché ailleurs (imprimé, partagé) cesse alors de fonctionner.
+   */
+  async generateMerchantCode(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        id: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur introuvable.');
+    }
+
+    if (user.role !== UserRole.VENDOR) {
+      throw new ForbiddenException(
+        'Seul un compte marchand peut générer un code marchand.',
+      );
+    }
+
+    for (let attempt = 0; attempt < MERCHANT_CODE_MAX_ATTEMPTS; attempt += 1) {
+      const merchantCode = this.generateRandomMerchantCode();
+
+      try {
+        return await this.prisma.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            merchantCode,
+          },
+          select: {
+            id: true,
+            phone: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            status: true,
+            merchantCode: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      } catch (error) {
+        const isUniqueConflict =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002';
+
+        if (!isUniqueConflict) {
+          throw error;
+        }
+
+        // Collision très improbable sur le code généré : on retente
+        // avec un nouveau tirage plutôt que d'échouer directement.
+      }
+    }
+
+    throw new ConflictException(
+      "Impossible de générer un code marchand unique pour l'instant, veuillez réessayer.",
+    );
+  }
+
+  private generateRandomMerchantCode(): string {
+    let suffix = '';
+
+    for (let i = 0; i < MERCHANT_CODE_LENGTH; i += 1) {
+      const index = Math.floor(Math.random() * MERCHANT_CODE_ALPHABET.length);
+      suffix += MERCHANT_CODE_ALPHABET[index];
+    }
+
+    return `PE-${suffix}`;
   }
 }

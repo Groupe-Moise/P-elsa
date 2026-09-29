@@ -46,6 +46,13 @@ export class UsersController {
     return this.usersService.findMe(request.user.id);
   }
 
+  // Auto-service : un marchand (VENDOR) génère lui-même son propre code,
+  // affiché ensuite sous forme de QR dans l'app (pas d'attribution admin).
+  @Post('me/merchant-code')
+  generateMerchantCode(@Req() request: AuthenticatedRequest) {
+    return this.usersService.generateMerchantCode(request.user.id);
+  }
+
   @Get('phone/:phone')
   @Roles(UserRole.ADMIN)
   findByPhone(@Param('phone') phone: string) {

@@ -37,6 +37,11 @@ dependencies:
   http: ^1.6.0
   flutter_secure_storage: ^11.0.0
 
+  # Paiement marchand : scan du QR code (mobile_scanner) et affichage
+  # du QR code marchand du vendeur (qr_flutter).
+  mobile_scanner: ^7.0.1
+  qr_flutter: ^4.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

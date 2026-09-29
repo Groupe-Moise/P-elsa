@@ -141,6 +141,28 @@ class _TransactionHistoryPageState
 
         return 'Change vers $toCode';
 
+      case 'PAYMENT':
+        final senderUserId =
+        transaction['senderUserId'];
+
+        final receiverUserId =
+        transaction['receiverUserId'];
+
+        final currentUserId =
+        transaction['_currentUserId'];
+
+        if (currentUserId != null &&
+            senderUserId == currentUserId) {
+          return 'Paiement';
+        }
+
+        if (currentUserId != null &&
+            receiverUserId == currentUserId) {
+          return 'Paiement reçu';
+        }
+
+        return 'Paiement';
+
       default:
         return type is String && type.isNotEmpty
             ? type
@@ -164,6 +186,9 @@ class _TransactionHistoryPageState
       case 'EXCHANGE':
         return Icons.currency_exchange;
 
+      case 'PAYMENT':
+        return Icons.storefront_outlined;
+
       default:
         return Icons.receipt_long_outlined;
     }
@@ -182,7 +207,7 @@ class _TransactionHistoryPageState
       return false;
     }
 
-    if (type == 'TRANSFER') {
+    if (type == 'TRANSFER' || type == 'PAYMENT') {
       final senderUserId =
       transaction['senderUserId'];
 
@@ -338,6 +363,9 @@ class _TransactionHistoryPageState
 
       case 'TRANSFER':
         return 'Transfert entre utilisateurs';
+
+      case 'PAYMENT':
+        return 'Paiement marchand';
 
       default:
         return 'Transaction P-Elsa';

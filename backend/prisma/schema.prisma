@@ -37,6 +37,12 @@ enum TransactionType {
   /// Conversion d'un solde d'une devise vers une autre, à
   /// l'intérieur du même wallet (voir le module `exchange`).
   EXCHANGE
+
+  /// Paiement d'un client vers un marchand (compte VENDOR), identifié
+  /// par son code marchand plutôt que par son numéro de téléphone
+  /// (voir TransactionsService.createPayment). Distinct de TRANSFER
+  /// pour pouvoir les compter et les afficher séparément.
+  PAYMENT
 }
 
 enum LedgerAccountKind {
@@ -91,6 +97,14 @@ model User {
 
   role              UserRole   @default(CLIENT)
   status            UserStatus @default(ACTIVE)
+
+  /// Code marchand, uniquement pour un compte VENDOR : identifie ce
+  /// compte pour un paiement (voir TransactionsService.createPayment)
+  /// à la place d'un numéro de téléphone, généré par le marchand
+  /// lui-même depuis l'app (voir UsersService.generateMerchantCode) et
+  /// affiché sous forme de QR code à présenter aux clients. `null`
+  /// tant qu'il n'a pas encore été généré, ou pour tout autre rôle.
+  merchantCode      String?    @unique
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 

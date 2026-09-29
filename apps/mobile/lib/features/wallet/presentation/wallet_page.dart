@@ -10,6 +10,8 @@ import '../../../core/storage/token_storage.dart';
 import '../../../core/widgets/operation_success_dialog.dart';
 import 'deposit_page.dart';
 import 'exchange_page.dart';
+import 'merchant_code_page.dart';
+import 'payment_page.dart';
 import 'transaction_history_page.dart';
 import 'transfer_page.dart';
 import 'withdrawal_page.dart';
@@ -358,6 +360,41 @@ class _WalletPageState extends State<WalletPage> {
     await _loadWallet();
   }
 
+  Future<void> _openPayment() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const PaymentPage(),
+      ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    await _loadWallet();
+  }
+
+  Future<void> _openMerchantCode() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MerchantCodePage(
+          initialMerchantCode: _user?['merchantCode'] is String
+              ? _user?['merchantCode'] as String
+              : null,
+        ),
+      ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    // Le code marchand a pu être généré ou régénéré : on recharge
+    // pour que _user reflète le nouveau code la prochaine fois que
+    // cette page est ouverte.
+    await _loadWallet();
+  }
+
   Future<void> _openExchange() async {
     final balances = _balances();
 
@@ -503,6 +540,10 @@ class _WalletPageState extends State<WalletPage> {
         );
 
         return 'Change vers $toCode';
+      case 'PAYMENT':
+        return _isIncomingTransaction(transaction)
+            ? 'Paiement reçu'
+            : 'Paiement';
       default:
         return 'Transaction';
     }
@@ -518,6 +559,8 @@ class _WalletPageState extends State<WalletPage> {
         return Icons.swap_horiz;
       case 'EXCHANGE':
         return Icons.currency_exchange;
+      case 'PAYMENT':
+        return Icons.storefront_outlined;
       default:
         return Icons.receipt_long_outlined;
     }
@@ -534,7 +577,7 @@ class _WalletPageState extends State<WalletPage> {
       return false;
     }
 
-    if (type == 'TRANSFER') {
+    if (type == 'TRANSFER' || type == 'PAYMENT') {
       return transaction['receiverUserId'] == _user?['id'];
     }
 
@@ -659,12 +702,25 @@ class _WalletPageState extends State<WalletPage> {
             icon: const Icon(Icons.settings_outlined),
             onSelected: (action) {
               switch (action) {
+                case _SettingsAction.merchantCode:
+                  _openMerchantCode();
                 case _SettingsAction.logout:
                   _logout();
               }
             },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
+            itemBuilder: (context) => [
+              // Réservé aux comptes VENDOR : un CLIENT n'a pas de code
+              // marchand à générer (voir User.merchantCode).
+              if (_user?['role'] == 'VENDOR')
+                const PopupMenuItem(
+                  value: _SettingsAction.merchantCode,
+                  child: ListTile(
+                    leading: Icon(Icons.qr_code),
+                    title: Text('Mon code marchand'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              const PopupMenuItem(
                 value: _SettingsAction.logout,
                 child: ListTile(
                   leading: Icon(Icons.logout),
@@ -820,7 +876,7 @@ class _WalletPageState extends State<WalletPage> {
               child: _ActionCard(
                 icon: Icons.credit_card_outlined,
                 label: 'Paiement',
-                onTap: () => _showComingSoon('Paiement'),
+                onTap: _openPayment,
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
               ),
@@ -1675,9 +1731,10 @@ class _RecentTransactionTile extends StatelessWidget {
 }
 
 /// Options du menu "Paramètres" affiché depuis l'en-tête (voir
-/// PopupMenuButton dans WalletPage.build). Seule la déconnexion est
-/// implémentée pour le moment ; d'autres réglages viendront s'y
-/// ajouter au même endroit plus tard.
+/// PopupMenuButton dans WalletPage.build). `merchantCode` n'est
+/// proposé qu'aux comptes VENDOR (voir _buildSettingsMenuItems) ;
+/// d'autres réglages viendront s'y ajouter au même endroit plus tard.
 enum _SettingsAction {
+  merchantCode,
   logout,
 }

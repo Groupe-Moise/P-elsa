@@ -15,9 +15,11 @@ import { Prisma } from '../generated/prisma/client';
 import {
   TransactionStatus,
   TransactionType,
+  UserRole,
 } from '../generated/prisma/enums';
 
 import type { CreateDepositBody } from './dto/create-deposit.body';
+import type { CreatePaymentBody } from './dto/create-payment.body';
 import type { CreateTransferBody } from './dto/create-transfer.body';
 import type { CreateWithdrawalBody } from './dto/create-withdrawal.body';
 
@@ -137,6 +139,115 @@ export class TransactionsService {
          * indicatif : le transfert peut tout de même créer un
          * nouveau solde chez le destinataire si besoin (voir
          * getOrCreateWalletBalance).
+         */
+        currencies: user.wallet.balances.map(
+          (entry) => entry.currency,
+        ),
+      },
+    };
+  }
+
+  /**
+   * =========================================================
+   * RECHERCHE DU MARCHAND D'UN PAIEMENT
+   * =========================================================
+   *
+   * La recherche se fait à partir du code marchand (affiché en clair
+   * ou scanné via son QR code), et non du numéro de téléphone : voir
+   * User.merchantCode et UsersService.generateMerchantCode.
+   *
+   * Seul un compte VENDOR peut être trouvé de cette façon : un code
+   * marchand qui correspondrait par erreur à un CLIENT ou un ADMIN
+   * (ce qui ne devrait jamais arriver, le champ n'étant renseigné que
+   * pour les VENDOR) est traité comme introuvable.
+   */
+  async findPaymentRecipient(
+    payerUserId: string,
+    merchantCode: string,
+  ) {
+    const normalizedCode = merchantCode.trim().toUpperCase();
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        merchantCode: normalizedCode,
+      },
+
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        merchantCode: true,
+
+        wallet: {
+          select: {
+            id: true,
+            status: true,
+
+            balances: {
+              select: {
+                balance: true,
+
+                currency: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    symbol: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user || user.role !== UserRole.VENDOR) {
+      throw new NotFoundException(
+        'Aucun marchand ne correspond à ce code.',
+      );
+    }
+
+    if (user.id === payerUserId) {
+      throw new BadRequestException(
+        'Vous ne pouvez pas effectuer un paiement vers votre propre compte.',
+      );
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        'Le compte de ce marchand n’est pas actif.',
+      );
+    }
+
+    if (!user.wallet) {
+      throw new NotFoundException(
+        'Ce marchand ne possède pas encore de wallet.',
+      );
+    }
+
+    if (user.wallet.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        'Le wallet de ce marchand n’est pas actif.',
+      );
+    }
+
+    return {
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      merchantCode: user.merchantCode,
+
+      wallet: {
+        id: user.wallet.id,
+
+        /**
+         * Devises déjà détenues par ce wallet, à titre indicatif :
+         * le paiement peut tout de même créer un nouveau solde chez
+         * le marchand si besoin (voir getOrCreateWalletBalance).
          */
         currencies: user.wallet.balances.map(
           (entry) => entry.currency,
@@ -551,6 +662,404 @@ export class TransactionsService {
 
             receiver:
               updatedReceiverBalance.balance,
+          },
+        };
+      },
+      );
+
+      await this.idempotencyService.complete(
+        idempotency.reservationId,
+        result,
+      );
+
+      return result;
+    } catch (error) {
+      await this.idempotencyService.release(
+        idempotency.reservationId,
+      );
+
+      throw error;
+    }
+  }
+
+  /**
+   * =========================================================
+   * PAIEMENT D'UN CLIENT VERS UN MARCHAND
+   * =========================================================
+   *
+   * Même principe que createTransfer, à ceci près que :
+   * - le bénéficiaire est identifié par son code marchand
+   *   (User.merchantCode), pas par son userId ni son téléphone ;
+   * - seul un compte VENDOR actif peut être bénéficiaire ;
+   * - la transaction créée est de type PAYMENT (et non TRANSFER),
+   *   pour pouvoir la compter et l'afficher séparément.
+   *
+   * Le payerUserId provient toujours du JWT. Le montant, le PIN et le
+   * code marchand proviennent du body.
+   */
+  async createPayment(
+    payerUserId: string,
+    data: CreatePaymentBody,
+  ) {
+    if (
+      !data.pin ||
+      data.pin.trim().length === 0
+    ) {
+      throw new UnauthorizedException(
+        'Le PIN est obligatoire pour confirmer le paiement.',
+      );
+    }
+
+    if (
+      !Number.isFinite(data.amount) ||
+      data.amount <= 0
+    ) {
+      throw new BadRequestException(
+        'Le montant du paiement doit être supérieur à zéro.',
+      );
+    }
+
+    const merchantCode = data.merchantCode.trim().toUpperCase();
+
+    const amount = data.amount;
+
+    /**
+     * Pour le moment :
+     * commission = 0
+     *
+     * Nous ajouterons la vraie commission P-Elsa
+     * dans une étape dédiée.
+     */
+    const fee = 0;
+    const totalAmount = amount + fee;
+
+    /**
+     * =======================================================
+     * VÉRIFICATION DU PIN
+     * =======================================================
+     */
+    const payerUser = await this.prisma.user.findUnique({
+      where: {
+        id: payerUserId,
+      },
+
+      select: {
+        id: true,
+        status: true,
+        pinHash: true,
+      },
+    });
+
+    if (!payerUser) {
+      throw new NotFoundException(
+        "L'utilisateur payeur est introuvable.",
+      );
+    }
+
+    if (payerUser.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        "Le compte du payeur n'est pas actif.",
+      );
+    }
+
+    if (!payerUser.pinHash) {
+      throw new UnauthorizedException(
+        'Le compte ne possède pas de PIN valide.',
+      );
+    }
+
+    /**
+     * Vérification du PIN avec limitation des tentatives :
+     * après plusieurs échecs, le PIN est bloqué temporairement.
+     */
+    const pinResult = await this.pinAttemptsService.verify(
+      payerUser.id,
+      data.pin,
+    );
+
+    if (!pinResult.valid) {
+      throw new UnauthorizedException(
+        `PIN incorrect. Le paiement n’a pas été effectué. ${pinResult.message}`,
+      );
+    }
+
+    /**
+     * =======================================================
+     * TRANSACTION FINANCIÈRE ATOMIQUE
+     * =======================================================
+     */
+    const idempotency = await this.idempotencyService.begin(
+      payerUserId,
+      data.idempotencyKey,
+    );
+
+    if (idempotency.replay) {
+      return idempotency.response;
+    }
+
+    try {
+      const result = await this.prisma.$transaction(
+      async (tx) => {
+        /**
+         * Devise de ce paiement (USD par défaut). Le marchand est
+         * crédité dans la même devise, sans conversion automatique.
+         */
+        const currency = await this.resolveCurrency(
+          tx,
+          data.currencyCode,
+        );
+
+        const payerWallet =
+          await tx.wallet.findUnique({
+            where: {
+              userId: payerUserId,
+            },
+            include: {
+              user: true,
+            },
+          });
+
+        if (!payerWallet) {
+          throw new NotFoundException(
+            'Le wallet du payeur est introuvable.',
+          );
+        }
+
+        /**
+         * Recherche du marchand par son code, à l'intérieur même de
+         * la transaction : un code désactivé ou régénéré entre-temps
+         * (voir UsersService.generateMerchantCode) est ainsi détecté
+         * de façon fiable plutôt que de se fier à un résultat déjà
+         * lu par GET /transactions/payment/recipient.
+         */
+        const merchantUser = await tx.user.findUnique({
+          where: {
+            merchantCode,
+          },
+          include: {
+            wallet: true,
+          },
+        });
+
+        if (!merchantUser || merchantUser.role !== UserRole.VENDOR) {
+          throw new NotFoundException(
+            'Aucun marchand ne correspond à ce code.',
+          );
+        }
+
+        if (merchantUser.id === payerUserId) {
+          throw new BadRequestException(
+            'Vous ne pouvez pas effectuer un paiement vers votre propre compte.',
+          );
+        }
+
+        const merchantWallet = merchantUser.wallet;
+
+        if (!merchantWallet) {
+          throw new NotFoundException(
+            'Le wallet de ce marchand est introuvable.',
+          );
+        }
+
+        /**
+         * Vérification du statut des wallets.
+         */
+        if (payerWallet.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            "Le wallet du payeur n'est pas actif.",
+          );
+        }
+
+        if (merchantWallet.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            'Le wallet de ce marchand n’est pas actif.',
+          );
+        }
+
+        /**
+         * Vérification du statut des comptes.
+         */
+        if (payerWallet.user.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            "Le compte du payeur n'est pas actif.",
+          );
+        }
+
+        if (merchantUser.status !== 'ACTIVE') {
+          throw new BadRequestException(
+            'Le compte de ce marchand n’est pas actif.',
+          );
+        }
+
+        /**
+         * Solde du payeur dans la devise du paiement. Celui du
+         * marchand est créé à zéro s'il n'existe pas encore dans
+         * cette devise (voir getOrCreateWalletBalance).
+         */
+        const payerBalance = await this.getOrCreateWalletBalance(
+          tx,
+          payerWallet.id,
+          currency.id,
+        );
+
+        const merchantBalance = await this.getOrCreateWalletBalance(
+          tx,
+          merchantWallet.id,
+          currency.id,
+        );
+
+        /**
+         * Vérification préalable du solde (message d'erreur clair).
+         *
+         * Cette lecture seule ne suffit pas à empêcher une double
+         * dépense : la vraie protection est le débit conditionnel
+         * effectué plus bas.
+         */
+        if (
+          payerBalance.balance.lt(totalAmount)
+        ) {
+          throw new BadRequestException(
+            'Solde insuffisant pour effectuer ce paiement.',
+          );
+        }
+
+        /**
+         * Génération de la référence.
+         */
+        const reference =
+          this.generateReference();
+
+        /**
+         * Débit du payeur et crédit du marchand.
+         *
+         * PROTECTION CONTRE LA DOUBLE DÉPENSE : voir createTransfer.
+         * Les deux soldes sont toujours modifiés dans le même ordre
+         * (selon leur id), quel que soit le sens du paiement.
+         */
+        const debitPayer = async () => {
+          const debit = await tx.walletBalance.updateMany({
+            where: {
+              id: payerBalance.id,
+              balance: {
+                gte: totalAmount,
+              },
+            },
+            data: {
+              balance: {
+                decrement: totalAmount,
+              },
+            },
+          });
+
+          if (debit.count !== 1) {
+            throw new BadRequestException(
+              'Solde insuffisant pour effectuer ce paiement.',
+            );
+          }
+        };
+
+        const creditMerchant = async () => {
+          await tx.walletBalance.update({
+            where: {
+              id: merchantBalance.id,
+            },
+            data: {
+              balance: {
+                increment: amount,
+              },
+            },
+          });
+        };
+
+        if (payerBalance.id < merchantBalance.id) {
+          await debitPayer();
+          await creditMerchant();
+        } else {
+          await creditMerchant();
+          await debitPayer();
+        }
+
+        /**
+         * Lecture des soldes après opération.
+         */
+        const updatedPayerBalance =
+          await tx.walletBalance.findUniqueOrThrow({
+            where: {
+              id: payerBalance.id,
+            },
+          });
+
+        const updatedMerchantBalance =
+          await tx.walletBalance.findUniqueOrThrow({
+            where: {
+              id: merchantBalance.id,
+            },
+          });
+
+        /**
+         * Création de la transaction.
+         */
+        const transaction =
+          await tx.transaction.create({
+            data: {
+              reference,
+              type: TransactionType.PAYMENT,
+              status:
+                TransactionStatus.COMPLETED,
+
+              amount,
+              fee,
+              totalAmount,
+
+              senderUserId:
+                payerWallet.userId,
+
+              receiverUserId:
+                merchantWallet.userId,
+
+              senderWalletId:
+                payerWallet.id,
+
+              receiverWalletId:
+                merchantWallet.id,
+
+              currencyId:
+                currency.id,
+
+              description:
+                data.description,
+            },
+
+            include: {
+              senderUser: true,
+
+              receiverUser: true,
+
+              senderWallet: true,
+
+              receiverWallet: true,
+            },
+          });
+
+        await this.ledgerService.recordTransfer(tx, {
+          transactionId: transaction.id,
+          senderWalletId: payerWallet.id,
+          receiverWalletId: merchantWallet.id,
+          currencyId: currency.id,
+          amount,
+        });
+
+        return {
+          transaction,
+
+          currency: currency.code,
+
+          balances: {
+            payer:
+              updatedPayerBalance.balance,
+
+            merchant:
+              updatedMerchantBalance.balance,
           },
         };
       },
