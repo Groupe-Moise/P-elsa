@@ -340,12 +340,32 @@ class _WalletPageState extends State<WalletPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          tooltip: 'Profil',
+          onPressed: () => _showComingSoon('Profil'),
+          icon: const Icon(Icons.person_outline),
+        ),
         title: const Text('Mon Wallet'),
         actions: [
-          IconButton(
-            tooltip: 'Déconnexion',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
+          PopupMenuButton<_SettingsAction>(
+            tooltip: 'Paramètres',
+            icon: const Icon(Icons.settings_outlined),
+            onSelected: (action) {
+              switch (action) {
+                case _SettingsAction.logout:
+                  _logout();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _SettingsAction.logout,
+                child: ListTile(
+                  leading: Icon(Icons.logout),
+                  title: Text('Déconnexion'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -506,21 +526,10 @@ class _WalletPageState extends State<WalletPage> {
         // uniquement) : affichées comme les autres, mais estompées
         // et marquées "Bientôt" — au clic, un simple message plutôt
         // qu'une navigation, le temps de leur implémentation.
+        // Profil et Paramètres sont désormais dans l'en-tête (icônes
+        // de part et d'autre du titre "Mon Wallet"), pas ici.
         Row(
           children: [
-            Expanded(
-              child: _ActionCard(
-                icon: Icons.person_outline,
-                label: 'Profil',
-                onTap: () => _showComingSoon('Profil'),
-                iconColor: AppColors.textSecondary,
-                backgroundColor: AppColors.surfaceVariant,
-                comingSoon: true,
-              ),
-            ),
-
-            const SizedBox(width: 12),
-
             Expanded(
               child: _ActionCard(
                 icon: Icons.credit_card_outlined,
@@ -531,31 +540,14 @@ class _WalletPageState extends State<WalletPage> {
                 comingSoon: true,
               ),
             ),
-          ],
-        ),
-
-        const SizedBox(height: 12),
-
-        Row(
-          children: [
-            Expanded(
-              child: _ActionCard(
-                icon: Icons.notifications_outlined,
-                label: 'Notifications',
-                onTap: () => _showComingSoon('Notifications'),
-                iconColor: AppColors.textSecondary,
-                backgroundColor: AppColors.surfaceVariant,
-                comingSoon: true,
-              ),
-            ),
 
             const SizedBox(width: 12),
 
             Expanded(
               child: _ActionCard(
-                icon: Icons.settings_outlined,
-                label: 'Paramètres',
-                onTap: () => _showComingSoon('Paramètres'),
+                icon: Icons.notifications_outlined,
+                label: 'Notifications',
+                onTap: () => _showComingSoon('Notifications'),
                 iconColor: AppColors.textSecondary,
                 backgroundColor: AppColors.surfaceVariant,
                 comingSoon: true,
@@ -862,4 +854,12 @@ class _ActionCard extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Options du menu "Paramètres" affiché depuis l'en-tête (voir
+/// PopupMenuButton dans WalletPage.build). Seule la déconnexion est
+/// implémentée pour le moment ; d'autres réglages viendront s'y
+/// ajouter au même endroit plus tard.
+enum _SettingsAction {
+  logout,
 }
