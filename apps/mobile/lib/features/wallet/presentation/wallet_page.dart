@@ -46,6 +46,12 @@ class _WalletPageState extends State<WalletPage> {
   /// reste sur `TransactionHistoryPage`.
   List<Map<String, dynamic>> _transactions = [];
 
+  /// Taux de change USD -> CDF courant (voir `_buildExchangeRateCard`),
+  /// `null` tant qu'il n'a pas encore été chargé ou si le chargement a
+  /// échoué (la carte affiche alors un état neutre plutôt que de
+  /// bloquer l'écran).
+  double? _exchangeRateUsdToCdf;
+
   final PageController _promoPageController = PageController();
 
   @override
@@ -103,10 +109,12 @@ class _WalletPageState extends State<WalletPage> {
 
       _selectBalanceForCurrency(preferredCurrencyCode);
 
-      // Chargée séparément : une panne ici ne doit pas empêcher
-      // d'afficher le wallet (l'aperçu "Transactions récentes" et le
-      // résumé des dépenses disparaissent simplement si elle échoue).
+      // Chargées séparément : une panne ici ne doit pas empêcher
+      // d'afficher le wallet (l'aperçu "Transactions récentes", le
+      // résumé des dépenses et le taux de change affichent simplement
+      // un état neutre si l'un de ces appels échoue).
       unawaited(_loadRecentTransactions(token));
+      unawaited(_loadExchangeRate(token));
     } on ApiException catch (error) {
       if (!mounted) {
         return;
@@ -158,6 +166,38 @@ class _WalletPageState extends State<WalletPage> {
 
       setState(() {
         _transactions = [];
+      });
+    }
+  }
+
+  /// Alimente la carte "Bureau de change" de l'accueil
+  /// (`_buildExchangeRateCard`) avec le vrai taux USD -> CDF configuré
+  /// côté backend (`GET /exchange/rate`), à la place de la valeur fixe
+  /// précédente. Silencieuse en cas d'échec : la carte affiche alors
+  /// un état neutre plutôt que de bloquer l'écran.
+  Future<void> _loadExchangeRate(String token) async {
+    try {
+      final response = await _apiClient.get(
+        '/exchange/rate?from=USD&to=CDF',
+        token: token,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _exchangeRateUsdToCdf = CurrencyFormatter.parseAmount(
+          response['rate'],
+        );
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _exchangeRateUsdToCdf = null;
       });
     }
   }
@@ -402,6 +442,12 @@ class _WalletPageState extends State<WalletPage> {
         return _isIncomingTransaction(transaction)
             ? 'Transfert reçu'
             : 'Transfert envoyé';
+      case 'EXCHANGE':
+        final toCode = CurrencyFormatter.codeFromCurrencyField(
+          transaction['toCurrency'],
+        );
+
+        return 'Change vers $toCode';
       default:
         return 'Transaction';
     }
@@ -415,6 +461,8 @@ class _WalletPageState extends State<WalletPage> {
         return Icons.arrow_upward;
       case 'TRANSFER':
         return Icons.swap_horiz;
+      case 'EXCHANGE':
+        return Icons.currency_exchange;
       default:
         return Icons.receipt_long_outlined;
     }
@@ -470,6 +518,17 @@ class _WalletPageState extends State<WalletPage> {
     };
 
     for (final transaction in _transactions) {
+      /// Une conversion de change ne fait pas sortir d'argent du
+      /// wallet : elle déplace un solde d'une devise vers une autre,
+      /// toutes deux comptées séparément ci-dessus. La compter comme
+      /// une dépense en devise source gonflerait ce total sans raison
+      /// (et elle ne serait de toute façon pas rattrapée côté "revenu"
+      /// puisque `_isIncomingTransaction` ne la traite pas non plus
+      /// comme une entrée).
+      if (transaction['type'] == 'EXCHANGE') {
+        continue;
+      }
+
       if (_isIncomingTransaction(transaction)) {
         continue;
       }
@@ -858,10 +917,17 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  /// Taux de change indicatif USD/CDF. Valeur fixe pour l'instant
-  /// (aperçu de mise en page) : à brancher sur un vrai taux une fois
-  /// le bureau de change développé côté backend.
+  /// Taux de change USD -> CDF, chargé depuis `GET /exchange/rate`
+  /// (voir `_loadExchangeRate`) : configuré par un admin en base, plus
+  /// une valeur fixe. L'écran de conversion lui-même (bureau de
+  /// change) n'est pas encore développé, d'où le "bientôt" au tap.
   Widget _buildExchangeRateCard(BuildContext context) {
+    final rate = _exchangeRateUsdToCdf;
+
+    final rateLabel = rate == null
+        ? 'Taux indisponible pour le moment'
+        : '1 \$ ≈ ${_formatRate(rate)} CDF';
+
     return Card(
       elevation: 0,
       color: AppColors.surfaceVariant,
@@ -882,14 +948,14 @@ class _WalletPageState extends State<WalletPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '1 \$ ≈ 2 800 CDF',
+                      rateLabel,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Taux indicatif du jour',
+                      'Taux du jour',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -904,6 +970,17 @@ class _WalletPageState extends State<WalletPage> {
         ),
       ),
     );
+  }
+
+  /// Affiche un taux de change sans décimales inutiles (ex. "2800"
+  /// plutôt que "2800.00"), mais garde jusqu'à 2 décimales quand le
+  /// taux n'est pas un nombre rond.
+  String _formatRate(double rate) {
+    if (rate == rate.roundToDouble()) {
+      return rate.toStringAsFixed(0);
+    }
+
+    return rate.toStringAsFixed(2);
   }
 
   /// Résumé des sorties d'argent du mois en cours (voir
@@ -1007,6 +1084,11 @@ class _WalletPageState extends State<WalletPage> {
             typeLabel: _transactionTypeLabel(transaction),
             icon: _transactionIcon(transaction),
             incoming: _isIncomingTransaction(transaction),
+            // Une conversion de change n'est ni un gain ni une perte
+            // (voir _monthlySpendingByCurrency) : affichée sans signe
+            // +/- ni couleur verte/rouge, pour ne pas donner
+            // l'impression trompeuse d'un revenu ou d'une dépense.
+            neutral: transaction['type'] == 'EXCHANGE',
             currencySymbol: CurrencyFormatter.compactLabel(
               _transactionCurrencyCode(transaction),
             ),
@@ -1465,6 +1547,7 @@ class _RecentTransactionTile extends StatelessWidget {
     required this.typeLabel,
     required this.icon,
     required this.incoming,
+    this.neutral = false,
     required this.currencySymbol,
     required this.amount,
     required this.onTap,
@@ -1473,14 +1556,23 @@ class _RecentTransactionTile extends StatelessWidget {
   final String typeLabel;
   final IconData icon;
   final bool incoming;
+
+  /// Vrai pour une opération qui n'est ni un gain ni une perte pour
+  /// l'utilisateur (ex. une conversion de change) : affichée sans
+  /// signe +/- ni couleur verte/rouge, `incoming` est alors ignoré.
+  final bool neutral;
+
   final String currencySymbol;
   final String amount;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final amountColor = incoming ? AppColors.success : AppColors.error;
-    final amountPrefix = incoming ? '+' : '-';
+    final amountColor = neutral
+        ? AppColors.textPrimary
+        : (incoming ? AppColors.success : AppColors.error);
+
+    final amountPrefix = neutral ? '' : (incoming ? '+' : '-');
 
     return InkWell(
       onTap: onTap,
@@ -1494,14 +1586,16 @@ class _RecentTransactionTile extends StatelessWidget {
               height: 40,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: incoming
+                color: !neutral && incoming
                     ? AppColors.successContainer
                     : AppColors.surfaceVariant,
               ),
               child: Icon(
                 icon,
                 size: 20,
-                color: incoming ? AppColors.success : AppColors.textSecondary,
+                color: !neutral && incoming
+                    ? AppColors.success
+                    : AppColors.textSecondary,
               ),
             ),
             const SizedBox(width: 12),

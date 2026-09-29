@@ -134,6 +134,13 @@ class _TransactionHistoryPageState
 
         return 'Transfert';
 
+      case 'EXCHANGE':
+        final toCode = CurrencyFormatter.codeFromCurrencyField(
+          transaction['toCurrency'],
+        );
+
+        return 'Change vers $toCode';
+
       default:
         return type is String && type.isNotEmpty
             ? type
@@ -153,6 +160,9 @@ class _TransactionHistoryPageState
 
       case 'TRANSFER':
         return Icons.swap_horiz;
+
+      case 'EXCHANGE':
+        return Icons.currency_exchange;
 
       default:
         return Icons.receipt_long_outlined;

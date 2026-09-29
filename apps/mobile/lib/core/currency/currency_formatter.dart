@@ -68,8 +68,15 @@ class CurrencyFormatter {
   /// avant l'ajout du multi-devises (`currencyId` alors vide, voir
   /// le commentaire sur ce champ côté schéma Prisma).
   static String codeFromTransaction(Map<String, dynamic>? transaction) {
-    final currency = transaction?['currency'];
+    return codeFromCurrencyField(transaction?['currency']);
+  }
 
+  /// Extrait le code de devise (ex. 'CDF') d'un champ de relation
+  /// `Currency` déjà résolu par l'API, tel quel (pas imbriqué dans un
+  /// wallet ou une transaction) — ex. `transaction['toCurrency']` sur
+  /// une conversion de change (voir `codeFromTransaction` pour la
+  /// devise source d'une transaction).
+  static String codeFromCurrencyField(dynamic currency) {
     if (currency is Map<String, dynamic>) {
       final code = currency['code'];
 
