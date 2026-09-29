@@ -183,6 +183,7 @@ class _WalletPageState extends State<WalletPage> {
       MaterialPageRoute(
         builder: (_) => WithdrawalPage(
           initialCurrencyCode: currentCurrencyCode,
+          availableBalances: _availableBalances(balances),
         ),
       ),
     );
@@ -294,6 +295,20 @@ class _WalletPageState extends State<WalletPage> {
         'currency': _wallet?['currency'],
       },
     ];
+  }
+
+  /// Convertit la liste de `_balances()` en une table simple
+  /// { code devise -> solde } pour les écrans qui doivent valider un
+  /// montant saisi par rapport au solde disponible (ex. retrait) sans
+  /// avoir à connaître le format brut renvoyé par l'API.
+  Map<String, double> _availableBalances(
+      List<Map<String, dynamic>> balances,
+      ) {
+    return {
+      for (final entry in balances)
+        CurrencyFormatter.codeFromWallet(entry):
+        CurrencyFormatter.parseAmount(entry['balance']),
+    };
   }
 
   /// Retient `currencyCode` (celle de l'opération qui vient d'être

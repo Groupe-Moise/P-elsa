@@ -604,20 +604,16 @@ export class TransactionsService {
   ) {
     /**
      * =======================================================
-     * VALIDATION DU PIN
+     * PAS DE PIN POUR UN DÉPÔT
      * =======================================================
-     */
-    if (
-      !data.pin ||
-      !/^\d{6}$/.test(data.pin.trim())
-    ) {
-      throw new UnauthorizedException(
-        'Le PIN doit contenir 6 chiffres pour confirmer le dépôt.',
-      );
-    }
-
-    /**
-     * Recherche de l'utilisateur et de son PIN.
+     *
+     * Contrairement au retrait et au transfert, un dépôt ne fait
+     * jamais sortir d'argent du wallet : au pire, l'utilisateur
+     * ajoute de l'argent chez lui. L'autorisation réelle est déjà
+     * faite côté opérateur Mobile Money, qui demande généralement
+     * une validation sur le téléphone du client (USSD/notification)
+     * avant d'exécuter la collecte. On se contente donc de vérifier
+     * que le compte existe et reste actif.
      */
     const user = await this.prisma.user.findUnique({
       where: {
@@ -627,7 +623,6 @@ export class TransactionsService {
       select: {
         id: true,
         status: true,
-        pinHash: true,
       },
     });
 
@@ -640,27 +635,6 @@ export class TransactionsService {
     if (user.status !== 'ACTIVE') {
       throw new UnauthorizedException(
         "Le compte utilisateur n'est pas actif.",
-      );
-    }
-
-    if (!user.pinHash) {
-      throw new UnauthorizedException(
-        'Le compte ne possède pas de PIN valide.',
-      );
-    }
-
-    /**
-     * Vérification du PIN avec limitation des tentatives :
-     * après plusieurs échecs, le PIN est bloqué temporairement.
-     */
-    const pinResult = await this.pinAttemptsService.verify(
-      user.id,
-      data.pin.trim(),
-    );
-
-    if (!pinResult.valid) {
-      throw new UnauthorizedException(
-        `PIN incorrect. Le dépôt n’a pas été effectué. ${pinResult.message}`,
       );
     }
 

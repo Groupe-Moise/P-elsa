@@ -8,7 +8,6 @@ import {
 
 import { CountryField, PhoneField } from '../../common/phone/phone-field.decorator';
 import { CurrencyCodeField } from '../../common/currency/currency-code.decorator';
-import { PinField } from '../../common/pin/pin.decorators';
 import { AmountField } from './amount-field.decorator';
 import { MOBILE_MONEY_NETWORKS } from './transaction-rules';
 
@@ -31,8 +30,13 @@ export class CreateDepositBody {
   @CountryField()
   country?: string;
 
-  @PinField()
-  pin!: string;
+  /**
+   * Pas de PIN pour un dépôt : contrairement à un retrait ou un
+   * transfert, l'argent ne sort jamais du wallet ici. L'autorisation
+   * réelle a lieu côté opérateur Mobile Money, qui demande
+   * généralement une validation sur le téléphone du client
+   * (USSD/notification) avant d'exécuter la collecte.
+   */
 
   @IsOptional()
   @IsString()

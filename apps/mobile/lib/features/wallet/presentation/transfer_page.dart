@@ -1026,6 +1026,13 @@ class _TransferPageState extends State<TransferPage> {
               ),
               textInputAction:
               TextInputAction.done,
+              // Revalide à chaque frappe (dès que le champ a été
+              // touché une première fois) : le message "solde
+              // insuffisant" doit apparaître instantanément dès que
+              // le montant saisi dépasse le solde disponible, sans
+              // attendre le bouton "Continuer".
+              autovalidateMode:
+              AutovalidateMode.onUserInteraction,
               decoration: InputDecoration(
                 labelText: 'Montant',
                 hintText: '0.00',

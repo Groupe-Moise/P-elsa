@@ -13,11 +13,17 @@ class WithdrawalPage extends StatefulWidget {
   const WithdrawalPage({
     super.key,
     this.initialCurrencyCode = 'USD',
+    this.availableBalances = const {},
   });
 
   /// Devise pré-sélectionnée à l'ouverture de l'écran (ex. la devise
   /// actuellement affichée sur le dashboard).
   final String initialCurrencyCode;
+
+  /// Solde disponible par devise (ex. { 'USD': 120.0, 'CDF': 50000.0 }),
+  /// utilisé pour signaler un solde insuffisant dès la saisie du
+  /// montant, sans attendre la confirmation du retrait.
+  final Map<String, double> availableBalances;
 
   @override
   State<WithdrawalPage> createState() => _WithdrawalPageState();
@@ -75,6 +81,12 @@ class _WithdrawalPageState extends State<WithdrawalPage> {
   double get _totalAmount {
     final amount = _amount ?? 0;
     return amount + _fee;
+  }
+
+  /// Solde disponible pour la devise actuellement sélectionnée dans
+  /// le champ montant (voir `CurrencyToggle`).
+  double get _availableBalance {
+    return widget.availableBalances[_selectedCurrencyCode] ?? 0;
   }
 
   void _onPhoneChanged(String value) {
@@ -385,6 +397,13 @@ class _WithdrawalPageState extends State<WithdrawalPage> {
                         decimal: true,
                       ),
                       textInputAction: TextInputAction.done,
+                      // Revalide à chaque frappe (dès que le champ a été
+                      // touché une première fois) : le message "solde
+                      // insuffisant" doit apparaître instantanément dès
+                      // que le montant saisi dépasse le solde
+                      // disponible, sans attendre la confirmation.
+                      autovalidateMode:
+                      AutovalidateMode.onUserInteraction,
                       onChanged: (_) {
                         setState(() {});
                       },
@@ -409,6 +428,13 @@ class _WithdrawalPageState extends State<WithdrawalPage> {
                               _selectedCurrencyCode =
                                   currencyCode;
                             });
+
+                            // Le solde disponible dépend de la devise :
+                            // on force une revalidation immédiate pour
+                            // que le message "solde insuffisant"
+                            // tienne compte du changement, même si le
+                            // montant saisi n'a pas bougé.
+                            _formKey.currentState?.validate();
                           },
                         ),
                         border: const OutlineInputBorder(),
@@ -430,6 +456,15 @@ class _WithdrawalPageState extends State<WithdrawalPage> {
 
                         if (amount <= 0) {
                           return 'Le montant doit être supérieur à zéro.';
+                        }
+
+                        final total = amount + (amount * 0.005);
+
+                        if (total > _availableBalance) {
+                          return 'Solde insuffisant. Disponible : '
+                              '${CurrencyFormatter.compactLabel(_selectedCurrencyCode)} '
+                              '${CurrencyFormatter.formatAmount(_availableBalance)}, '
+                              'frais compris.';
                         }
 
                         return null;

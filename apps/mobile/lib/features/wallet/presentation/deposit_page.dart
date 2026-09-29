@@ -7,7 +7,6 @@ import '../../../core/payment/network_detector.dart';
 import '../../../core/storage/token_storage.dart';
 import '../../../core/widgets/currency_toggle.dart';
 import '../../../core/widgets/payment_mode_selector.dart';
-import '../../../core/widgets/pin_dialog.dart';
 
 class DepositPage extends StatefulWidget {
   const DepositPage({
@@ -91,28 +90,6 @@ class _DepositPageState extends State<DepositPage> {
       return;
     }
 
-    await Future<void>.delayed(
-      const Duration(milliseconds: 150),
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    final pin = await _showPinDialog();
-
-    if (!mounted || pin == null) {
-      return;
-    }
-
-    await Future<void>.delayed(
-      const Duration(milliseconds: 150),
-    );
-
-    if (!mounted) {
-      return;
-    }
-
     setState(() {
       _isLoading = true;
     });
@@ -138,7 +115,6 @@ class _DepositPageState extends State<DepositPage> {
         token: token,
         body: <String, dynamic>{
           'amount': amount,
-          'pin': pin,
           'network': network,
           'phone': _phoneController.text.trim(),
           'currencyCode': _selectedCurrencyCode,
@@ -188,13 +164,6 @@ class _DepositPageState extends State<DepositPage> {
         });
       }
     }
-  }
-
-  Future<String?> _showPinDialog() {
-    return PinDialog.show(
-      context,
-      title: 'Confirmer le dépôt',
-    );
   }
 
   void _showError(String message) {
